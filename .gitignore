@@ -1,0 +1,65 @@
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+*.local
+
+# Production and test output
+build/
+**/build/
+dist/
+coverage/
+.cache/
+.tmp/
+
+# Logs and runtime files
+*.log
+logs/
+*.pid
+*.seed
+*.pid.lock
+
+# Databases and local data
+*.sqlite
+*.sqlite3
+*.db
+*.dump
+backups/
+
+# Certificates and private keys
+*.pem
+*.key
+*.crt
+*.p12
+*.jks
+
+# OS files
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Editors and IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Frontend tooling
+.eslintcache
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Temporary exports and uploads
+uploads/
+tmp/
+temp/
+
+# Preserved nested repository metadata
+.git-standalone-backup/
+**/.git-standalone-backup/

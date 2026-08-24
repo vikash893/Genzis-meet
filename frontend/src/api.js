@@ -1,0 +1,17 @@
+// Centralized API Base Configuration for easy single-point URL updates
+export const API_BASE_URL = process.env.REACT_APP_API_URL || "http://localhost:8000";
+
+export const ENDPOINTS = {
+  USER_LOGIN: `${API_BASE_URL}/api/user/login`,
+  USER_REGISTER: `${API_BASE_URL}/api/user/register`,
+  ADMIN_LOGIN: `${API_BASE_URL}/api/admin/admin-login`,
+  ADMIN_REGISTER_USER: `${API_BASE_URL}/api/admin/Register-user`,
+  ADMIN_CREATE_ADMIN: `${API_BASE_URL}/api/admin/create-admin`,
+  ADMIN_USER_ANALYTICS: `${API_BASE_URL}/api/admin/user-analytics`,
+  ANNOUNCEMENT_ALL: `${API_BASE_URL}/api/announcement/all`,
+  ANNOUNCEMENT_PUBLISH: `${API_BASE_URL}/api/announcement/publish`,
+  MEETING_CREATE: `${API_BASE_URL}/meeting/create`,
+  MEETING_JOIN: `${API_BASE_URL}/meeting/join`,
+  MEETING_ACTIVE: `${API_BASE_URL}/meeting/active`,
+  MEETING_END: `${API_BASE_URL}/meeting/end`
+};

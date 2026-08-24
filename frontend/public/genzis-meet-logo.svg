@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title desc">
+  <title id="title">genzis-meet logo</title>
+  <desc id="desc">Mint rounded square with a black video camera mark</desc>
+  <rect width="64" height="64" rx="16" fill="#b6f1cf"/>
+  <path d="M16 23.5A5.5 5.5 0 0 1 21.5 18h16a5.5 5.5 0 0 1 5.5 5.5v9a5.5 5.5 0 0 1-5.5 5.5h-16a5.5 5.5 0 0 1-5.5-5.5z" fill="#111716"/>
+  <path d="m43 26 8-4.5a2 2 0 0 1 3 1.74v17.52A2 2 0 0 1 51 42.5L43 38z" fill="#111716"/>
+  <circle cx="25" cy="27" r="2.5" fill="#b6f1cf"/>
+</svg>
