@@ -11,6 +11,7 @@ import Dashboard from "./pages/Dashboard";
 import AdminDashboard from "./pages/AdminDashboard";
 import JoinMeeting from "./pages/JoinMeeting";
 import Meeting from "./pages/Meeting";
+import Register from "./pages/Register";
 
 function App() {
   return (
@@ -23,7 +24,7 @@ function App() {
 
         {/* Auth Routes */}
         <Route path="/login" element={<Login />} />
-        <Route path="/register" element={<Navigate to="/login" replace />} />
+        <Route path="/register" element={<Navigate to="/Register" />} />
 
         {/* User Dashboard */}
         <Route path="/dashboard" element={<Dashboard />} />
