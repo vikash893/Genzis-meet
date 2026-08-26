@@ -1,15 +1,23 @@
-import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import Navbar from "../components/Navbar";
 import LoginModal from "../components/LoginModal";
 
 function LandingPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const token = localStorage.getItem("token");
   const [showLoginModal, setShowLoginModal] = useState(false);
 
   // Join Code Form
   const [meetingCode, setMeetingCode] = useState("");
+
+  useEffect(() => {
+    if (location.state?.requireLogin) {
+      setShowLoginModal(true);
+      navigate("/", { replace: true, state: {} });
+    }
+  }, [location.state, navigate]);
 
   const handleInstantStart = () => {
     if (token) {

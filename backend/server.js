@@ -4,12 +4,52 @@ const connectDb = require("./config/db");
 const http = require("http");
 const { Server } = require("socket.io");
 const cors = require("cors");
+const jwt = require("jsonwebtoken");
+const crypto = require("crypto");
 
 const adminRouter = require("./routers/admin");
 const announcementRouter = require("./routers/announcement");
 const userRouter = require("./routers/user");
 const meetingRouter = require("./routers/meetingRouter");
 const Meeting = require("./models/meeting");
+const ChatMessage = require("./models/chatMessage");
+const MeetingAttendance = require("./models/meetingAttendance");
+const Subtitle = require("./models/subtitle");
+const User = require("./models/users");
+
+const chatEncryptionKey = crypto
+    .createHash("sha256")
+    .update(process.env.CHAT_ENCRYPTION_KEY || process.env.JWT_SECRET || "change-this-chat-key")
+    .digest();
+
+function encryptChatMessage(message) {
+    const iv = crypto.randomBytes(12);
+    const cipher = crypto.createCipheriv("aes-256-gcm", chatEncryptionKey, iv);
+    const encryptedMessage = Buffer.concat([
+        cipher.update(message, "utf8"),
+        cipher.final()
+    ]);
+
+    return {
+        encryptedMessage: encryptedMessage.toString("base64"),
+        iv: iv.toString("base64"),
+        authTag: cipher.getAuthTag().toString("base64")
+    };
+}
+
+function decryptChatMessage(chatMessage) {
+    const decipher = crypto.createDecipheriv(
+        "aes-256-gcm",
+        chatEncryptionKey,
+        Buffer.from(chatMessage.iv, "base64")
+    );
+    decipher.setAuthTag(Buffer.from(chatMessage.authTag, "base64"));
+
+    return Buffer.concat([
+        decipher.update(Buffer.from(chatMessage.encryptedMessage, "base64")),
+        decipher.final()
+    ]).toString("utf8");
+}
 
 
 // ==========================================
@@ -88,6 +128,21 @@ const io = new Server(
     }
 );
 
+io.use((socket, next) => {
+    try {
+        const token = socket.handshake.auth && socket.handshake.auth.token;
+        if (!token) {
+            return next(new Error("Authentication required"));
+        }
+
+        const jwtSecret = process.env.JWT_SECRET || "default_jwt_secret_key_123";
+        socket.user = jwt.verify(token, jwtSecret);
+        next();
+    } catch (error) {
+        next(new Error("Invalid or expired token"));
+    }
+});
+
 // ==========================================
 // MEETING USERS
 //
@@ -134,8 +189,10 @@ io.on(
             "join-meeting",
             async ({
                 meetingId,
-                email
+                passcode
             }) => {
+
+                const email = socket.user.email;
 
                 console.log(
                     `${email} wants to join ${meetingId}`
@@ -145,18 +202,39 @@ io.on(
                 let meetingRecord = null;
                 try {
                     meetingRecord = await Meeting.findOne({ meetingId: meetingId });
+                    if (!meetingRecord) {
+                        socket.emit("meeting-access-denied", { message: "Meeting not found" });
+                        return;
+                    }
                     if (meetingRecord && meetingRecord.status === "ended") {
                         console.log(`Rejecting join for ended meeting ${meetingId}`);
                         socket.emit("meeting-ended-by-host");
                         return;
                     }
+                    const isHost = meetingRecord.hostemail.toLowerCase() === email.toLowerCase();
+                    const isInvited = isHost || meetingRecord.accessMode !== "selected" || meetingRecord.allowedEmails.includes(email.toLowerCase());
+                    if (!isHost && meetingRecord.passcode !== passcode) {
+                        socket.emit("meeting-access-denied", { message: "Invalid meeting passcode" });
+                        return;
+                    }
+                    if (!isInvited) {
+                        socket.emit("meeting-access-denied", { message: "You are not invited to this meeting" });
+                        return;
+                    }
                 } catch (err) {
                     console.error("DB meeting status check error:", err);
+                    socket.emit("meeting-access-denied", { message: "Unable to verify meeting access" });
+                    return;
                 }
 
                 // ------------------------------------------
                 // Join Socket.IO room
                 // ------------------------------------------
+
+                if (!meetingRecord.startedAt) {
+                    meetingRecord.startedAt = new Date();
+                    await meetingRecord.save();
+                }
 
                 socket.join(
                     meetingId
@@ -230,6 +308,26 @@ io.on(
 
                     });
 
+                    try {
+                        const joinedAt = new Date();
+                        await MeetingAttendance.create({
+                            meetingId,
+                            email,
+                            joinedAt
+                        });
+                        await User.findByIdAndUpdate(socket.user.id, {
+                            $push: {
+                                meetingHistory: {
+                                    meetingId,
+                                    title: meetingRecord.title || "Untitled meeting",
+                                    joinedAt
+                                }
+                            }
+                        });
+                    } catch (error) {
+                        console.error("Attendance save error:", error);
+                    }
+
                 }
 
 
@@ -242,6 +340,30 @@ io.on(
                 // ------------------------------------------
                 // Send participant list
                 // ------------------------------------------
+
+                socket.emit("meeting-info", {
+                    meetingId: meetingRecord.meetingId,
+                    title: meetingRecord.title || "Untitled meeting"
+                });
+
+                try {
+                    const savedMessages = await ChatMessage.find({ meetingId })
+                        .sort({ sentAt: 1 })
+                        .lean();
+
+                    const chatHistory = savedMessages.map((savedMessage) => ({
+                        id: savedMessage.messageId,
+                        meetingId: savedMessage.meetingId,
+                        email: savedMessage.senderEmail,
+                        message: decryptChatMessage(savedMessage),
+                        timestamp: savedMessage.sentAt.toISOString()
+                    }));
+
+                    socket.emit("chat-history", chatHistory);
+                } catch (error) {
+                    console.error("Chat history load error:", error);
+                    socket.emit("chat-history", []);
+                }
 
                 io.to(
                     meetingId
@@ -547,14 +669,49 @@ io.on(
 
 
         // ==========================================
+        // LIVE SUBTITLES
+        // ==========================================
+
+        socket.on("send-subtitle", async ({ meetingId, text, timestamp }) => {
+            const cleanText = typeof text === "string" ? text.trim() : "";
+            const usersInMeeting = meetingUsers.get(meetingId);
+            const sender = usersInMeeting && usersInMeeting.find((user) => user.socketId === socket.id);
+            if (!sender || !cleanText || cleanText.length > 500) return;
+
+            const spokenAt = timestamp ? new Date(timestamp) : new Date();
+            if (Number.isNaN(spokenAt.getTime())) return;
+
+            try {
+                await Subtitle.create({
+                    meetingId,
+                    userId: socket.user.id,
+                    email: sender.email,
+                    text: cleanText,
+                    spokenAt
+                });
+                await User.findByIdAndUpdate(socket.user.id, {
+                    $push: { subtitleHistory: { meetingId, text: cleanText, spokenAt } }
+                });
+                io.to(meetingId).emit("subtitle", {
+                    meetingId,
+                    userId: socket.user.id,
+                    email: sender.email,
+                    text: cleanText,
+                    spokenAt: spokenAt.toISOString()
+                });
+            } catch (error) {
+                console.error("Subtitle save error:", error);
+            }
+        });
+
+        // ==========================================
         // LIVE CHAT
         // ==========================================
 
         socket.on(
             "send-message",
-            ({
+            async ({
                 meetingId,
-                email,
                 message,
                 id,
                 timestamp
@@ -584,7 +741,7 @@ io.on(
 
                 console.log(
                     "Email:",
-                    email
+                    socket.user.email
                 );
 
 
@@ -653,14 +810,41 @@ io.on(
 
 
                 // Create chat message
-                const senderEmail = (sender && sender.email) || email || "Participant";
+                if (!sender) {
+                    console.log("Rejected chat from a socket outside the meeting:", socket.id);
+                    return;
+                }
+
+                const senderEmail = sender.email;
+                const cleanMessage = message.trim();
+                const messageId = id || `${Date.now()}-${socket.id}`;
+                const sentAt = timestamp ? new Date(timestamp) : new Date();
+
+                if (Number.isNaN(sentAt.getTime())) {
+                    return;
+                }
+
+                try {
+                    const encrypted = encryptChatMessage(cleanMessage);
+                    await ChatMessage.create({
+                        meetingId,
+                        messageId,
+                        senderEmail,
+                        ...encrypted,
+                        sentAt
+                    });
+                } catch (error) {
+                    console.error("Chat message save error:", error);
+                    socket.emit("chat-save-error", { message: "Message could not be saved" });
+                    return;
+                }
 
                 const chatMessage = {
-                    id: id || `${Date.now()}-${socket.id}`,
+                    id: messageId,
                     meetingId: meetingId,
                     email: senderEmail,
-                    message: message.trim(),
-                    timestamp: timestamp || new Date().toISOString()
+                    message: cleanMessage,
+                    timestamp: sentAt.toISOString()
                 };
 
                 // Broadcast message to EVERYONE in the meeting room
@@ -679,121 +863,42 @@ io.on(
         // DISCONNECT
         // ==========================================
 
-        socket.on(
-            "disconnect",
-            () => {
+        socket.on("disconnect", async () => {
+            console.log("User disconnected:", socket.id);
 
-                console.log(
-                    "User disconnected:",
-                    socket.id
-                );
+            for (const [meetingId, users] of meetingUsers) {
+                const disconnectedUser = users.find((user) => user.socketId === socket.id);
+                if (!disconnectedUser) continue;
 
+                const updatedUsers = users.filter((user) => user.socketId !== socket.id);
 
-                // ------------------------------------------
-                // Search all meetings
-                // ------------------------------------------
-
-                for (
-                    const [
-                        meetingId,
-                        users
-                    ]
-                    of meetingUsers
-                ) {
-
-
-                    // ------------------------------------------
-                    // Remove disconnected user
-                    // ------------------------------------------
-
-                    const updatedUsers =
-                        users.filter(
-                            user =>
-                                user.socketId !==
-                                socket.id
-                        );
-
-
-                    // ------------------------------------------
-                    // Nobody left
-                    // ------------------------------------------
-
-                    if (
-                        updatedUsers.length === 0
-                    ) {
-
-                        meetingUsers.delete(
-                            meetingId
-                        );
-
-                        meetingHosts.delete(
-                            meetingId
-                        );
-
-
-                        console.log(
-                            `Meeting ${meetingId} is now empty`
-                        );
-
-                    }
-
-
-                    // ------------------------------------------
-                    // Users still present
-                    // ------------------------------------------
-
-                    else if (
-                        updatedUsers.length !==
-                        users.length
-                    ) {
-
-                        meetingUsers.set(
-                            meetingId,
-                            updatedUsers
-                        );
-
-
-                        console.log(
-                            "Updated participants:",
-                            updatedUsers
-                        );
-
-
-                        // ------------------------------------------
-                        // Send updated participants
-                        // ------------------------------------------
-
-                        io.to(
-                            meetingId
-                        ).emit(
-                            "participants",
-                            updatedUsers
-                        );
-
-
-                        // ------------------------------------------
-                        // Notify users
-                        // someone left
-                        // ------------------------------------------
-
-                        io.to(
-                            meetingId
-                        ).emit(
-                            "user-left",
-                            {
-
-                                socketId:
-                                    socket.id
-
-                            }
-                        );
-
-                    }
-
+                try {
+                    const leftAt = new Date();
+                    await MeetingAttendance.findOneAndUpdate(
+                        { meetingId, email: disconnectedUser.email, leftAt: null },
+                        { leftAt },
+                        { sort: { joinedAt: -1 } }
+                    );
+                    await User.findOneAndUpdate(
+                        { _id: socket.user.id, "meetingHistory.meetingId": meetingId, "meetingHistory.leftAt": null },
+                        { $set: { "meetingHistory.$.leftAt": leftAt } },
+                        { sort: { "meetingHistory.joinedAt": -1 } }
+                    );
+                } catch (error) {
+                    console.error("Attendance close error:", error);
                 }
 
+                if (updatedUsers.length === 0) {
+                    meetingUsers.delete(meetingId);
+                    meetingHosts.delete(meetingId);
+                    console.log(`Meeting ${meetingId} is now empty`);
+                } else {
+                    meetingUsers.set(meetingId, updatedUsers);
+                    io.to(meetingId).emit("participants", updatedUsers);
+                    io.to(meetingId).emit("user-left", { socketId: socket.id });
+                }
             }
-        );
+        });
 
     }
 );

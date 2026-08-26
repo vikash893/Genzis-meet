@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useNavigate, useLocation, Link } from "react-router-dom";
 import LoginModal from "./LoginModal";
+import RegisterModal from "./RegisterModal";
 
 function Navbar() {
   const navigate = useNavigate();
@@ -9,12 +10,18 @@ function Navbar() {
   const userEmail = localStorage.getItem("userEmail") || "User";
   const userRole = localStorage.getItem("userRole") || "user";
   const [showLoginModal, setShowLoginModal] = useState(false);
+  const [showRegisterModal, setShowRegisterModal] = useState(false);
 
   const handleLogout = () => {
     localStorage.removeItem("token");
     localStorage.removeItem("userEmail");
     localStorage.removeItem("userRole");
-    navigate("/login");
+    navigate("/");
+  };
+
+  const openRegisterModal = () => {
+    navigate("/");
+    setShowRegisterModal(true);
   };
 
   const isActive = (path) => location.pathname === path;
@@ -106,10 +113,26 @@ function Navbar() {
             >
               Sign In
             </button>
+            <button
+              type="button"
+              onClick={openRegisterModal}
+              className="px-4 py-2 text-sm font-semibold rounded-lg bg-white text-black hover:bg-slate-200 transition-colors"
+            >
+              Sign Up
+            </button>
           </div>
         )}
       </div>
       {showLoginModal && <LoginModal onClose={() => setShowLoginModal(false)} />}
+      {showRegisterModal && (
+        <RegisterModal
+          onClose={() => setShowRegisterModal(false)}
+          onRegistered={() => {
+            setShowRegisterModal(false);
+            setShowLoginModal(true);
+          }}
+        />
+      )}
     </nav>
   );
 }

@@ -11,7 +11,16 @@ import Dashboard from "./pages/Dashboard";
 import AdminDashboard from "./pages/AdminDashboard";
 import JoinMeeting from "./pages/JoinMeeting";
 import Meeting from "./pages/Meeting";
-import Register from "./pages/Register";
+
+function ProtectedMeeting() {
+  const token = localStorage.getItem("token");
+
+  if (!token) {
+    return <Navigate to="/" replace state={{ requireLogin: true }} />;
+  }
+
+  return <Meeting />;
+}
 
 function App() {
   return (
@@ -24,7 +33,7 @@ function App() {
 
         {/* Auth Routes */}
         <Route path="/login" element={<Login />} />
-        <Route path="/register" element={<Navigate to="/Register" />} />
+        <Route path="/register" element={<Navigate to="/" replace />} />
 
         {/* User Dashboard */}
         <Route path="/dashboard" element={<Dashboard />} />
@@ -37,8 +46,8 @@ function App() {
         <Route path="/meeting" element={<JoinMeeting />} />
 
         {/* Live Meeting Room */}
-        <Route path="/meeting/live" element={<Meeting />} />
-        <Route path="/meeting/live/:meetingId" element={<Meeting />} />
+        <Route path="/meeting/live" element={<ProtectedMeeting />} />
+        <Route path="/meeting/live/:meetingId" element={<ProtectedMeeting />} />
 
         {/* Catch-all fallback */}
         <Route path="*" element={<Navigate to="/" replace />} />

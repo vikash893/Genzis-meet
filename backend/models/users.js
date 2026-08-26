@@ -16,6 +16,23 @@ const userSchema = new mongoose.Schema({
     password : {
         type : String , 
         required : true 
+    },
+    meetingHistory: {
+        type: [{
+            meetingId: { type: String, required: true },
+            title: { type: String, default: "Untitled meeting" },
+            joinedAt: { type: Date, required: true },
+            leftAt: { type: Date, default: null }
+        }],
+        default: []
+    },
+    subtitleHistory: {
+        type: [{
+            meetingId: { type: String, required: true },
+            text: { type: String, required: true },
+            spokenAt: { type: Date, required: true }
+        }],
+        default: []
     }
 })
 

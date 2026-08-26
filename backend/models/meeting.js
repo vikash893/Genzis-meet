@@ -18,6 +18,30 @@ const meetingSchema = new mongoose.Schema(
             required: true
         },
 
+        hostId: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "user",
+            required: true
+        },
+
+        title: {
+            type: String,
+            default: "Untitled meeting",
+            trim: true,
+            maxlength: 120
+        },
+
+        accessMode: {
+            type: String,
+            enum: ["open", "selected"],
+            default: "open"
+        },
+
+        allowedEmails: {
+            type: [String],
+            default: []
+        },
+
         status: {
             type: String,
             enum: ["active", "ended"],
@@ -27,6 +51,11 @@ const meetingSchema = new mongoose.Schema(
         createdAt: {
             type: Date,
             default: Date.now
+        },
+
+        startedAt: {
+            type: Date,
+            default: null
         },
 
         endedAt: {

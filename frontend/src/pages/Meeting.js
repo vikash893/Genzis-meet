@@ -12,6 +12,7 @@ import {
 } from "react-router-dom";
 
 import socket from "../socket";
+import { ENDPOINTS } from "../api";
 import Chat from "../components/Chat";
 import RemoteVideo from "../components/RemoteVideo";
 
@@ -27,6 +28,9 @@ function Meeting() {
   // User credentials
   const email = location.state?.email || localStorage.getItem("userEmail") || "Guest User";
   const [meetingPasscode] = useState(urlPasscode || "••••");
+  const [meetingTitle, setMeetingTitle] = useState("Untitled meeting");
+  const [currentSubtitle, setCurrentSubtitle] = useState(null);
+  const speechRecognitionRef = useRef(null);
 
   // Media Refs
   const localVideoRef = useRef(null);
@@ -227,6 +231,16 @@ function Meeting() {
       setHostSocketId(hId);
     };
 
+    const handleMeetingAccessDenied = ({ message }) => {
+      alert(message || "You do not have access to this meeting.");
+      navigate("/dashboard");
+    };
+
+    const handleMeetingInfo = ({ title }) => setMeetingTitle(title || "Untitled meeting");
+    const handleSubtitle = (subtitle) => {
+      setCurrentSubtitle(subtitle);
+    };
+
     const handleMeetingEndedByHost = () => {
       alert("The meeting has been ended by the host.");
       leaveMeeting();
@@ -244,6 +258,9 @@ function Meeting() {
     socket.on("privacy-mode-changed", handlePrivacyModeChanged);
     socket.on("host-info", handleHostInfo);
     socket.on("meeting-ended-by-host", handleMeetingEndedByHost);
+    socket.on("meeting-access-denied", handleMeetingAccessDenied);
+    socket.on("meeting-info", handleMeetingInfo);
+    socket.on("subtitle", handleSubtitle);
 
     const startMeeting = async () => {
       try {
@@ -259,7 +276,7 @@ function Meeting() {
 
         if (!hasJoinedMeetingRef.current) {
           hasJoinedMeetingRef.current = true;
-          socket.emit("join-meeting", { meetingId, email });
+          socket.emit("join-meeting", { meetingId, passcode: urlPasscode });
         }
       } catch (err) {
         console.error("Camera/Mic error:", err);
@@ -281,6 +298,9 @@ function Meeting() {
       socket.off("privacy-mode-changed", handlePrivacyModeChanged);
       socket.off("host-info", handleHostInfo);
       socket.off("meeting-ended-by-host", handleMeetingEndedByHost);
+      socket.off("meeting-access-denied", handleMeetingAccessDenied);
+      socket.off("meeting-info", handleMeetingInfo);
+      socket.off("subtitle", handleSubtitle);
 
       if (localStreamRef.current) {
         localStreamRef.current.getTracks().forEach((track) => track.stop());
@@ -293,6 +313,40 @@ function Meeting() {
       // eslint-disable-next-line react-hooks/exhaustive-deps
     };
   }, [meetingId, email, createPeerConnection]);
+
+  useEffect(() => {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) return undefined;
+
+    const recognition = new SpeechRecognition();
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.lang = "en-US";
+    recognition.onresult = (event) => {
+      const result = event.results[event.results.length - 1];
+      if (result.isFinal) {
+        socket.emit("send-subtitle", {
+          meetingId,
+          text: result[0].transcript,
+          timestamp: new Date().toISOString()
+        });
+      }
+    };
+    recognition.onerror = (error) => console.warn("Speech recognition unavailable:", error.error);
+    recognition.onend = () => {
+      if (hasJoinedMeetingRef.current) {
+        try { recognition.start(); } catch (error) { /* Browser may already be restarting. */ }
+      }
+    };
+    speechRecognitionRef.current = recognition;
+    try { recognition.start(); } catch (error) { console.warn("Speech recognition start failed", error); }
+
+    return () => {
+      hasJoinedMeetingRef.current = false;
+      recognition.stop();
+      speechRecognitionRef.current = null;
+    };
+  }, [meetingId]);
 
   // Controls Handlers
   const toggleMicrophone = () => {
@@ -390,6 +444,11 @@ function Meeting() {
 
   // In-Browser HD Lecture Recording
   const startRecording = async () => {
+    if (!isHost) {
+      alert("Only the host can record this meeting.");
+      return;
+    }
+
     if (isPrivacyMode && !isHost) {
       alert("Privacy Shield is active! Non-host participants are restricted from recording this lecture.");
       return;
@@ -408,12 +467,27 @@ function Meeting() {
         }
       };
 
-      mediaRecorder.onstop = () => {
+      mediaRecorder.onstop = async () => {
         clearInterval(recordingTimerRef.current);
         setIsRecording(false);
         setRecordingDuration(0);
 
         const blob = new Blob(recordedChunksRef.current, { type: "video/webm" });
+        try {
+          const response = await fetch(ENDPOINTS.MEETING_RECORDING(meetingId), {
+            method: "POST",
+            headers: {
+              "Content-Type": "video/webm",
+              Authorization: `Bearer ${localStorage.getItem("token")}`
+            },
+            body: blob
+          });
+          if (!response.ok) throw new Error("Recording upload failed");
+        } catch (error) {
+          console.error("Recording upload error:", error);
+          alert("Recording could not be saved to the server. A local download is still available.");
+        }
+
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.style.display = "none";
@@ -493,6 +567,7 @@ function Meeting() {
             <span className="font-mono font-bold text-sm text-[#8ab4f8] tracking-wider">
               {meetingId}
             </span>
+              <span className="text-xs text-white max-w-[220px] truncate">{meetingTitle}</span>
           </div>
 
           {/* Recording Badge */}
@@ -628,6 +703,11 @@ function Meeting() {
               </div>
             ))}
           </div>
+          {currentSubtitle && (
+            <div className="absolute bottom-8 left-1/2 -translate-x-1/2 z-30 max-w-[80%] px-5 py-2 rounded-xl bg-black/75 text-white text-sm text-center shadow-xl">
+              <strong>{currentSubtitle.email?.split("@")[0]}:</strong> {currentSubtitle.text}
+            </div>
+          )}
         </main>
 
         {/* SIDE DRAWER: IN-CALL CHAT */}

@@ -22,12 +22,17 @@ function Chat({ meetingId, email, onClose }) {
       });
     };
 
+    const handleChatHistory = (chatHistory) => {
+      setMessages(chatHistory || []);
+    };
+
     const handleConnect = () => setConnected(true);
     const handleDisconnect = () => setConnected(false);
 
     socket.on("connect", handleConnect);
     socket.on("disconnect", handleDisconnect);
     socket.on("receive-message", handleReceiveMessage);
+    socket.on("chat-history", handleChatHistory);
 
     if (socket.connected) setConnected(true);
 
@@ -35,6 +40,7 @@ function Chat({ meetingId, email, onClose }) {
       socket.off("connect", handleConnect);
       socket.off("disconnect", handleDisconnect);
       socket.off("receive-message", handleReceiveMessage);
+      socket.off("chat-history", handleChatHistory);
     };
   }, []);
 

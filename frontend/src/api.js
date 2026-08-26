@@ -14,5 +14,10 @@ export const ENDPOINTS = {
   MEETING_CREATE: `${API_BASE_URL}/meeting/create`,
   MEETING_JOIN: `${API_BASE_URL}/meeting/join`,
   MEETING_ACTIVE: `${API_BASE_URL}/meeting/active`,
-  MEETING_END: `${API_BASE_URL}/meeting/end`
+  MEETING_END: `${API_BASE_URL}/meeting/end`,
+  MEETING_ACCESS: (meetingId) => `${API_BASE_URL}/meeting/${meetingId}/access`,
+  MEETING_CANCEL: (meetingId) => `${API_BASE_URL}/meeting/${meetingId}`,
+  MEETING_HISTORY: `${API_BASE_URL}/meeting/history`,
+  MEETING_HISTORY_CSV: (meetingId) => `${API_BASE_URL}/meeting/history/${meetingId}.csv`,
+  MEETING_RECORDING: (meetingId) => `${API_BASE_URL}/meeting/${meetingId}/recording`
 };

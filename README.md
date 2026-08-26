@@ -48,6 +48,7 @@ Create `backend/.env` locally:
 ```env
 MONGO_URL=mongodb://127.0.0.1:27017/g4g5_db
 JWT_SECRET=replace-this-with-a-long-random-secret
+CHAT_ENCRYPTION_KEY=replace-this-with-a-different-long-random-secret
 PORT=8000
 ```
 
@@ -58,6 +59,7 @@ REACT_APP_API_URL=http://localhost:8000
 ```
 
 Never commit either `.env` file. Use different secrets for development and production.
+Keep `CHAT_ENCRYPTION_KEY` stable in production; changing it makes previously stored chat messages unreadable.
 
 ### 3. Start the application
 

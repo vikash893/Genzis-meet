@@ -25,7 +25,13 @@ function Dashboard() {
   // Announcements & Active Meetings
   const [announcements, setAnnouncements] = useState([]);
   const [activeMeetings, setActiveMeetings] = useState([]);
+  const [meetingHistory, setMeetingHistory] = useState([]);
   const [copiedField, setCopiedField] = useState("");
+  const [meetingAccessMode, setMeetingAccessMode] = useState("open");
+  const [invitedEmails, setInvitedEmails] = useState("");
+  const [accessError, setAccessError] = useState("");
+  const [savingAccess, setSavingAccess] = useState(false);
+  const [meetingTitle, setMeetingTitle] = useState("");
 
   useEffect(() => {
     if (!token) {
@@ -34,6 +40,7 @@ function Dashboard() {
     }
     fetchAnnouncements();
     fetchActiveMeetings();
+    fetchMeetingHistory();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token, navigate]);
 
@@ -65,6 +72,93 @@ function Dashboard() {
     }
   };
 
+  const fetchMeetingHistory = async () => {
+    try {
+      const res = await fetch(ENDPOINTS.MEETING_HISTORY, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await res.json();
+      if (res.ok) setMeetingHistory(data.meetings || []);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const startCreatedMeeting = async () => {
+    setAccessError("");
+    const allowedEmails = invitedEmails.split(",").map((item) => item.trim().toLowerCase()).filter(Boolean);
+    if (meetingAccessMode === "selected" && allowedEmails.length === 0) {
+      setAccessError("Add at least one user email.");
+      return;
+    }
+
+    setSavingAccess(true);
+    try {
+      const response = await fetch(ENDPOINTS.MEETING_ACCESS(createdMeeting.meetingId), {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ accessMode: meetingAccessMode, allowedEmails, title: createdMeeting.title })
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        setAccessError(data.message || "Unable to update meeting access");
+        return;
+      }
+      setShowCreateModal(false);
+      navigate(`/meeting/live/${createdMeeting.meetingId}`, { state: { email: userEmail } });
+    } catch (err) {
+      setAccessError("Unable to update meeting access");
+    } finally {
+      setSavingAccess(false);
+    }
+  };
+
+  const cancelCreatedMeeting = async () => {
+    if (!createdMeeting) return;
+
+    try {
+      await fetch(ENDPOINTS.MEETING_CANCEL(createdMeeting.meetingId), {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` }
+      });
+    } catch (err) {
+      console.error("Meeting cancellation error:", err);
+    } finally {
+      setShowCreateModal(false);
+      setCreatedMeeting(null);
+      fetchActiveMeetings();
+      fetchMeetingHistory();
+    }
+  };
+
+  const downloadAttendance = async (meetingId) => {
+    const response = await fetch(ENDPOINTS.MEETING_HISTORY_CSV(meetingId), {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    if (!response.ok) return;
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `meeting-${meetingId}-attendance.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const downloadRecording = async (meetingId) => {
+    const response = await fetch(ENDPOINTS.MEETING_RECORDING(meetingId), {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    if (!response.ok) return;
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `meeting-${meetingId}.webm`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
   const handleCreateMeeting = async () => {
     setCreating(true);
     try {
@@ -73,11 +167,13 @@ function Dashboard() {
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`
-        }
+        },
+        body: JSON.stringify({ title: meetingTitle.trim() || "Untitled meeting" })
       });
       const data = await res.json();
       if (res.ok) {
         setCreatedMeeting(data);
+        setMeetingTitle("");
         setShowCreateModal(true);
         fetchActiveMeetings();
       } else {
@@ -295,6 +391,67 @@ function Dashboard() {
             </div>
           </div>
         </div>
+
+        {/* HOST MEETING HISTORY */}
+        <section className="mt-8 bg-[#2d2f31] border border-[#3c4043] rounded-2xl p-6">
+          <div className="flex items-center justify-between mb-6 pb-4 border-b border-[#3c4043]">
+            <div>
+              <h2 className="text-xl font-normal text-white">Meeting History</h2>
+              <p className="text-xs text-[#9aa0a6] mt-1">Attendance records for meetings hosted by you</p>
+            </div>
+            <span className="text-xs text-[#8ab4f8] font-semibold">{meetingHistory.length} Meetings</span>
+          </div>
+          {meetingHistory.length === 0 ? (
+            <p className="text-center py-8 text-[#9aa0a6] text-sm">No hosted meetings yet.</p>
+          ) : (
+            <div className="space-y-3">
+              {meetingHistory.map((meeting) => (
+                <div key={meeting._id} className="p-4 rounded-xl bg-[#202124] border border-[#3c4043] flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                  <div>
+                    <div className="flex items-center gap-3">
+                      <span className="font-mono font-bold text-[#8ab4f8]">{meeting.meetingId}</span>
+                      <span className="text-xs text-[#9aa0a6]">{new Date(meeting.createdAt).toLocaleString()}</span>
+                    </div>
+                    <p className="text-xs text-[#9aa0a6] mt-1">{meeting.attendance.length} attendance records</p>
+                    <details className="mt-3">
+                      <summary className="cursor-pointer text-xs font-semibold text-[#8ab4f8]">View attendance</summary>
+                      <div className="mt-2 overflow-x-auto">
+                        <table className="w-full text-left text-[11px]">
+                          <thead className="text-[#9aa0a6]">
+                            <tr><th className="pr-4 py-1">User</th><th className="pr-4 py-1">Joined</th><th className="py-1">Left</th></tr>
+                          </thead>
+                          <tbody className="text-slate-300">
+                            {meeting.attendance.map((record) => (
+                              <tr key={record._id}>
+                                <td className="pr-4 py-1">{record.email}</td>
+                                <td className="pr-4 py-1">{new Date(record.joinedAt).toLocaleString()}</td>
+                                <td className="py-1">{record.leftAt ? new Date(record.leftAt).toLocaleString() : "Still connected"}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </details>
+                  </div>
+                  <button
+                    onClick={() => downloadAttendance(meeting.meetingId)}
+                    className="px-3.5 py-2 text-xs font-semibold text-[#8ab4f8] bg-[#8ab4f8]/10 hover:bg-[#8ab4f8]/20 border border-[#8ab4f8]/30 rounded-lg transition-colors"
+                  >
+                    Download CSV
+                  </button>
+                  {meeting.recording && (
+                    <button
+                      onClick={() => downloadRecording(meeting.meetingId)}
+                      className="px-3.5 py-2 text-xs font-semibold text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 rounded-lg transition-colors"
+                    >
+                      Download Video
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
       </main>
 
       {/* CREATE MEETING MODAL */}
@@ -302,7 +459,7 @@ function Dashboard() {
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
           <div className="w-full max-w-md bg-[#2d2f31] border border-[#3c4043] rounded-2xl p-8 relative shadow-2xl">
             <button
-              onClick={() => setShowCreateModal(false)}
+              onClick={cancelCreatedMeeting}
               className="absolute top-4 right-4 text-[#9aa0a6] hover:text-white"
             >
               ✕
@@ -315,6 +472,15 @@ function Dashboard() {
               <h3 className="text-2xl font-normal text-white">Meeting Ready!</h3>
               <p className="text-xs text-[#9aa0a6] mt-1">Share these details with your participants</p>
             </div>
+
+            <input
+              type="text"
+              value={createdMeeting.title || ""}
+              onChange={(event) => setCreatedMeeting({ ...createdMeeting, title: event.target.value })}
+              placeholder="Meeting title"
+              maxLength={120}
+              className="w-full mb-4 px-4 py-3 rounded-xl bg-[#202124] border border-[#3c4043] text-white text-sm"
+            />
 
             <div className="space-y-4 bg-[#202124] p-4 rounded-xl border border-[#3c4043] mb-6">
               <div>
@@ -348,23 +514,49 @@ function Dashboard() {
               </div>
             </div>
 
+            <div className="mb-6">
+              <span className="text-[11px] font-semibold text-[#9aa0a6] uppercase tracking-wider">Who can join?</span>
+              <div className="grid grid-cols-2 gap-2 mt-2">
+                <button
+                  type="button"
+                  onClick={() => setMeetingAccessMode("open")}
+                  className={`py-2.5 rounded-lg text-xs font-semibold border ${meetingAccessMode === "open" ? "bg-[#1a73e8] text-white border-[#1a73e8]" : "bg-[#3c4043] text-slate-300 border-[#3c4043]"}`}
+                >
+                  Open to all users
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMeetingAccessMode("selected")}
+                  className={`py-2.5 rounded-lg text-xs font-semibold border ${meetingAccessMode === "selected" ? "bg-[#1a73e8] text-white border-[#1a73e8]" : "bg-[#3c4043] text-slate-300 border-[#3c4043]"}`}
+                >
+                  Selected users
+                </button>
+              </div>
+              {meetingAccessMode === "selected" && (
+                <input
+                  type="text"
+                  value={invitedEmails}
+                  onChange={(event) => setInvitedEmails(event.target.value)}
+                  placeholder="user1@example.com, user2@example.com"
+                  className="w-full mt-3 px-4 py-3 rounded-xl bg-[#202124] border border-[#3c4043] text-white text-sm"
+                />
+              )}
+              {accessError && <p className="text-xs text-red-300 mt-2">{accessError}</p>}
+            </div>
+
             <div className="flex gap-3">
               <button
-                onClick={() => setShowCreateModal(false)}
+                onClick={cancelCreatedMeeting}
                 className="flex-1 py-3 bg-[#3c4043] hover:bg-[#4a4e51] text-slate-200 font-medium rounded-xl text-sm transition-colors"
               >
                 Close
               </button>
               <button
-                onClick={() => {
-                  setShowCreateModal(false);
-                  navigate(`/meeting/live/${createdMeeting.meetingId}`, {
-                    state: { email: userEmail }
-                  });
-                }}
+                onClick={startCreatedMeeting}
+                disabled={savingAccess}
                 className="flex-1 py-3 bg-[#1a73e8] hover:bg-[#1557b0] text-white font-medium rounded-xl text-sm transition-colors shadow-md"
               >
-                Start Meeting
+                {savingAccess ? "Saving..." : "Start Meeting"}
               </button>
             </div>
           </div>
