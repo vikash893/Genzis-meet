@@ -1,5 +1,6 @@
-// Centralized API Base Configuration for easy single-point URL updates
-export const API_BASE_URL = process.env.REACT_APP_API_URL ;
+// CRA embeds this value at build time, so keep the deployed backend as a safe production fallback.
+const configuredApiUrl = process.env.REACT_APP_API_URL || "https://genzis-meet.onrender.com";
+export const API_BASE_URL = configuredApiUrl.replace(/\/+$/, "");
 
 export const ENDPOINTS = {
   USER_LOGIN: `${API_BASE_URL}/api/user/login`,
