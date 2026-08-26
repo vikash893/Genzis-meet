@@ -1,5 +1,5 @@
 // Centralized API Base Configuration for easy single-point URL updates
-export const API_BASE_URL = process.env.REACT_APP_API_URL || "http://localhost:8000";
+export const API_BASE_URL = process.env.REACT_APP_API_URL ;
 
 export const ENDPOINTS = {
   USER_LOGIN: `${API_BASE_URL}/api/user/login`,
