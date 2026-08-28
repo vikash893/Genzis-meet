@@ -16,6 +16,7 @@ const ChatMessage = require("./models/chatMessage");
 const MeetingAttendance = require("./models/meetingAttendance");
 const Subtitle = require("./models/subtitle");
 const User = require("./models/users");
+const router = require("./routers/health");
 
 const chatEncryptionKey = crypto
     .createHash("sha256")
@@ -101,7 +102,7 @@ app.use(
     "/meeting",
     meetingRouter
 );
-
+app.use("/health", router);
 
 // ==========================================
 // HTTP SERVER
