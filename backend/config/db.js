@@ -4,7 +4,7 @@ const connectDb = async () => {
     try {
         const mongoUrl = process.env.MONGO_URL || "mongodb://127.0.0.1:27017/g4g5_db";
         await mongoose.connect(mongoUrl);
-        console.log('Database connected successfully:', mongoUrl);
+        console.log('Database connected successfully:');
 
         // Drop legacy unique index on hostemail if it exists in MongoDB
         try {
