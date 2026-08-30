@@ -111,10 +111,11 @@ function JoinMeeting() {
             // ==========================================
 
             navigate(
-                `/meeting/live/${data.meetingId}`,
+                `/meeting/live/${data.meetingId}?passcode=${encodeURIComponent(passcode.trim())}`,
                 {
                     state: {
-                        email: data.useremail
+                        email: data.useremail,
+                        passcode: passcode.trim()
                     }
                 }
             );

@@ -105,7 +105,7 @@ function Dashboard() {
         return;
       }
       setShowCreateModal(false);
-      navigate(`/meeting/live/${createdMeeting.meetingId}`, { state: { email: userEmail } });
+      navigate(`/meeting/live/${createdMeeting.meetingId}?passcode=${encodeURIComponent(createdMeeting.passcode)}`, { state: { email: userEmail, passcode: createdMeeting.passcode } });
     } catch (err) {
       setAccessError("Unable to update meeting access");
     } finally {
@@ -211,8 +211,8 @@ function Dashboard() {
         return;
       }
 
-      navigate(`/meeting/live/${data.meetingId}`, {
-        state: { email: data.useremail }
+      navigate(`/meeting/live/${data.meetingId}?passcode=${encodeURIComponent(joinPasscode.trim())}`, {
+        state: { email: data.useremail, passcode: joinPasscode.trim() }
       });
 
     } catch (err) {

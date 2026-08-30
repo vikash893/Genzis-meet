@@ -69,8 +69,7 @@ const port = process.env.PORT || 8000;
 app.use(
     cors({
         origin: "*",
-        methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-        credentials: true
+        methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
     })
 );
 
@@ -344,7 +343,8 @@ io.on(
 
                 socket.emit("meeting-info", {
                     meetingId: meetingRecord.meetingId,
-                    title: meetingRecord.title || "Untitled meeting"
+                    title: meetingRecord.title || "Untitled meeting",
+                    passcode: meetingRecord.passcode
                 });
 
                 try {

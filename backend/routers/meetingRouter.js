@@ -98,7 +98,6 @@ meetingRouter.post(
                     message: "Meeting not found"
                 });
             }
-
             if (meeting.status === "ended") {
                 return res.status(400).json({
                     message: "Meeting has already ended"
@@ -310,7 +309,7 @@ meetingRouter.get(
     authMiddleware,
     async (req, res) => {
         try {
-            const meetings = await Meeting.find({ status: "active", startedAt: { $ne: null } })
+            const meetings = await Meeting.find({ status: "active" })
                 .sort({ createdAt: -1 })
                 .limit(20);
 

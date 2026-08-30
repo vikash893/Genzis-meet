@@ -11,7 +11,7 @@ import {
   useNavigate
 } from "react-router-dom";
 
-import socket from "../socket";
+import socket, { connectSocket } from "../socket";
 import { ENDPOINTS } from "../api";
 import Chat from "../components/Chat";
 import RemoteVideo from "../components/RemoteVideo";
@@ -23,11 +23,11 @@ function Meeting() {
 
   // Parse URL search params (e.g. ?passcode=1234)
   const searchParams = new URLSearchParams(location.search);
-  const urlPasscode = searchParams.get("passcode") || "";
+  const urlPasscode = searchParams.get("passcode") || location.state?.passcode || "";
 
   // User credentials
   const email = location.state?.email || localStorage.getItem("userEmail") || "Guest User";
-  const [meetingPasscode] = useState(urlPasscode || "••••");
+  const [meetingPasscode, setMeetingPasscode] = useState(urlPasscode);
   const [meetingTitle, setMeetingTitle] = useState("Untitled meeting");
   const [currentSubtitle, setCurrentSubtitle] = useState(null);
   const speechRecognitionRef = useRef(null);
@@ -236,7 +236,10 @@ function Meeting() {
       navigate("/dashboard");
     };
 
-    const handleMeetingInfo = ({ title }) => setMeetingTitle(title || "Untitled meeting");
+    const handleMeetingInfo = ({ title, passcode }) => {
+      setMeetingTitle(title || "Untitled meeting");
+      if (passcode) setMeetingPasscode(passcode);
+    };
     const handleSubtitle = (subtitle) => {
       setCurrentSubtitle(subtitle);
     };
@@ -263,6 +266,7 @@ function Meeting() {
     socket.on("subtitle", handleSubtitle);
 
     const startMeeting = async () => {
+      connectSocket();
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
           video: true,
@@ -286,6 +290,7 @@ function Meeting() {
     startMeeting();
 
     return () => {
+      hasJoinedMeetingRef.current = false;
       socket.off("user-joined", handleUserJoined);
       socket.off("offer", handleOffer);
       socket.off("answer", handleAnswer);
@@ -312,7 +317,7 @@ function Meeting() {
       peerConnectionsRef.current.clear();
       // eslint-disable-next-line react-hooks/exhaustive-deps
     };
-  }, [meetingId, email, createPeerConnection]);
+  }, [meetingId, email, urlPasscode, createPeerConnection]);
 
   useEffect(() => {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -525,7 +530,6 @@ function Meeting() {
     if (screenStreamRef.current) screenStreamRef.current.getTracks().forEach((t) => t.stop());
     peerConnectionsRef.current.forEach((pc) => pc.close());
     peerConnectionsRef.current.clear();
-    socket.disconnect();
     navigate("/dashboard");
   };
 
