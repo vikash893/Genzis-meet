@@ -121,4 +121,15 @@ userRouter.get("/me", authMiddleware, async (req, res) => {
     }
 });
 
+// Get All Registered Users (for meeting invite selection)
+userRouter.get("/all", authMiddleware, async (req, res) => {
+    try {
+        const allUsers = await users.find({}, "name email").lean();
+        return res.status(200).json({ users: allUsers });
+    } catch (error) {
+        console.error("Get all users error:", error);
+        return res.status(500).json({ error: "Internal server error" });
+    }
+});
+
 module.exports = userRouter; 

@@ -585,7 +585,9 @@ function Meeting() {
           {/* Privacy Shield Badge */}
           {isPrivacyMode && (
             <div className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-500/20 border border-amber-500/40 text-amber-300 text-xs font-bold rounded-xl">
-              <span>🛡️</span>
+              <svg className="w-4 h-4 text-amber-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+              </svg>
               <span>Privacy Shield ON</span>
             </div>
           )}
@@ -604,7 +606,9 @@ function Meeting() {
             onClick={copyLiveInviteLink}
             className="px-4 py-2 bg-white hover:bg-slate-200 text-black font-semibold rounded-lg text-xs shadow-md transition-colors flex items-center gap-1.5 shrink-0"
           >
-            <span>🔗</span>
+            <svg className="w-4 h-4 text-black" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+            </svg>
             <span>{copiedText === "link" ? "Link Copied!" : "Copy Live Link"}</span>
           </button>
         </div>
@@ -628,7 +632,9 @@ function Meeting() {
               {/* Hand Raised Badge */}
               {isHandRaised && (
                 <div className="absolute top-3 left-3 z-20 px-3 py-1 bg-amber-400 text-slate-950 font-extrabold text-xs rounded-full shadow-lg flex items-center gap-1.5 animate-bounce">
-                  <span>✋</span>
+                  <svg className="w-4 h-4 text-slate-950" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 11.5V14m0-2.5v-6a1.5 1.5 0 113 0m-3 6a1.5 1.5 0 00-3 0v2a7.5 7.5 0 0015 0v-5a1.5 1.5 0 00-3 0m-6-3V11m0-5.5a1.5 1.5 0 113 0m-3 0V11m3-5.5a1.5 1.5 0 113 0V11" />
+                  </svg>
                   <span>You Raised Hand</span>
                 </div>
               )}
@@ -637,11 +643,16 @@ function Meeting() {
               <div className="absolute top-3 right-3 z-20">
                 {isMuted ? (
                   <span className="w-8 h-8 rounded-full bg-red-600/90 text-white flex items-center justify-center text-xs shadow-md backdrop-blur-md">
-                    🔇
+                    <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2" />
+                    </svg>
                   </span>
                 ) : (
                   <span className="w-8 h-8 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center justify-center text-xs backdrop-blur-md">
-                    🎤
+                    <svg className="w-4 h-4 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+                    </svg>
                   </span>
                 )}
               </div>
@@ -748,8 +759,21 @@ function Meeting() {
                     </div>
 
                     <div className="flex items-center gap-1.5">
-                      {rState.isHandRaised && <span>✋</span>}
-                      {rState.isMuted ? <span className="text-xs">🔇</span> : <span className="text-xs">🎤</span>}
+                      {rState.isHandRaised && (
+                        <svg className="w-4 h-4 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 11.5V14m0-2.5v-6a1.5 1.5 0 113 0m-3 6a1.5 1.5 0 00-3 0v2a7.5 7.5 0 0015 0v-5a1.5 1.5 0 00-3 0m-6-3V11m0-5.5a1.5 1.5 0 113 0m-3 0V11m3-5.5a1.5 1.5 0 113 0V11" />
+                        </svg>
+                      )}
+                      {rState.isMuted ? (
+                        <svg className="w-4 h-4 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2" />
+                        </svg>
+                      ) : (
+                        <svg className="w-4 h-4 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+                        </svg>
+                      )}
                     </div>
                   </div>
                 );
@@ -767,7 +791,9 @@ function Meeting() {
             onClick={() => setShowInfoModal(true)}
             className="px-3.5 py-2 rounded-full bg-[#2d2f31] hover:bg-[#3c4043] border border-[#3c4043] text-xs font-semibold text-slate-200 flex items-center gap-2 transition-all"
           >
-            <span>ℹ️</span>
+            <svg className="w-4 h-4 text-slate-200" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
             <span className="hidden sm:inline">Details</span>
           </button>
         </div>
@@ -777,55 +803,78 @@ function Meeting() {
           {/* Mute Mic */}
           <button
             onClick={toggleMicrophone}
-            className={`w-12 h-12 rounded-full flex items-center justify-center text-lg font-bold transition-all duration-200 shadow-md ${
+            className={`w-12 h-12 rounded-full flex items-center justify-center transition-all duration-200 shadow-md ${
               isMuted ? "bg-red-600 text-white" : "bg-[#3c4043] hover:bg-slate-600 text-slate-100"
             }`}
             title={isMuted ? "Unmute Mic" : "Mute Mic"}
           >
-            {isMuted ? "🔇" : "🎤"}
+            {isMuted ? (
+              <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2" />
+              </svg>
+            ) : (
+              <svg className="w-5 h-5 text-slate-100" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+              </svg>
+            )}
           </button>
 
           {/* Camera On/Off */}
           <button
             onClick={toggleCamera}
-            className={`w-12 h-12 rounded-full flex items-center justify-center text-lg font-bold transition-all duration-200 shadow-md ${
+            className={`w-12 h-12 rounded-full flex items-center justify-center transition-all duration-200 shadow-md ${
               isCameraOff ? "bg-red-600 text-white" : "bg-[#3c4043] hover:bg-slate-600 text-slate-100"
             }`}
             title={isCameraOff ? "Turn Camera On" : "Turn Camera Off"}
           >
-            {isCameraOff ? "📷" : "📹"}
+            {isCameraOff ? (
+              <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
+              </svg>
+            ) : (
+              <svg className="w-5 h-5 text-slate-100" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+              </svg>
+            )}
           </button>
 
           {/* Screen Share */}
           <button
             onClick={toggleScreenShare}
-            className={`w-12 h-12 rounded-full flex items-center justify-center text-lg font-bold transition-all duration-200 shadow-md ${
+            className={`w-12 h-12 rounded-full flex items-center justify-center transition-all duration-200 shadow-md ${
               isScreenSharing ? "bg-[#8ab4f8] text-[#202124]" : "bg-[#3c4043] hover:bg-slate-600 text-slate-100"
             }`}
             title="Present Screen"
           >
-            🖥️
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+            </svg>
           </button>
 
           {/* Raise Hand */}
           <button
             onClick={toggleRaiseHand}
-            className={`w-12 h-12 rounded-full flex items-center justify-center text-lg font-bold transition-all duration-200 shadow-md ${
+            className={`w-12 h-12 rounded-full flex items-center justify-center transition-all duration-200 shadow-md ${
               isHandRaised ? "bg-amber-400 text-slate-950 font-bold" : "bg-[#3c4043] hover:bg-slate-600 text-slate-100"
             }`}
             title="Raise Hand"
           >
-            ✋
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 11.5V14m0-2.5v-6a1.5 1.5 0 113 0m-3 6a1.5 1.5 0 00-3 0v2a7.5 7.5 0 0015 0v-5a1.5 1.5 0 00-3 0m-6-3V11m0-5.5a1.5 1.5 0 113 0m-3 0V11m3-5.5a1.5 1.5 0 113 0V11" />
+            </svg>
           </button>
 
           {/* Emoji Reactions Trigger */}
           <div className="relative">
             <button
               onClick={() => setShowReactionsMenu(!showReactionsMenu)}
-              className="w-12 h-12 rounded-full bg-[#3c4043] hover:bg-slate-600 text-slate-100 flex items-center justify-center text-lg font-bold transition-all shadow-md"
+              className="w-12 h-12 rounded-full bg-[#3c4043] hover:bg-slate-600 text-slate-100 flex items-center justify-center transition-all shadow-md"
               title="Send Reaction"
             >
-              😀
+              <svg className="w-5 h-5 text-slate-100" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.828 14.828a4 4 0 01-5.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
             </button>
 
             {showReactionsMenu && (
@@ -846,23 +895,28 @@ function Meeting() {
           {/* Record Lecture Button */}
           <button
             onClick={isRecording ? stopRecording : startRecording}
-            className={`w-12 h-12 rounded-full flex items-center justify-center text-lg font-bold transition-all duration-200 shadow-md ${
+            className={`w-12 h-12 rounded-full flex items-center justify-center transition-all duration-200 shadow-md ${
               isRecording ? "bg-red-600 text-white animate-pulse" : isPrivacyMode && !isHost ? "bg-gray-700 text-gray-400 cursor-not-allowed opacity-50" : "bg-[#3c4043] hover:bg-slate-600 text-slate-100"
             }`}
             title={isPrivacyMode && !isHost ? "Recording blocked by Host Privacy Shield" : isRecording ? "Stop Recording" : "Record Lecture"}
           >
-            🎙️
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <circle cx="12" cy="12" r="5" fill="currentColor" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z" />
+            </svg>
           </button>
 
           {/* Privacy Shield Toggle Button */}
           <button
             onClick={togglePrivacyShield}
-            className={`w-12 h-12 rounded-full flex items-center justify-center text-lg font-bold transition-all duration-200 shadow-md ${
+            className={`w-12 h-12 rounded-full flex items-center justify-center transition-all duration-200 shadow-md ${
               isPrivacyMode ? "bg-amber-500 text-slate-950" : "bg-[#3c4043] hover:bg-slate-600 text-slate-100"
             } ${!isHost ? "opacity-60 cursor-not-allowed" : ""}`}
             title={!isHost ? "Only host can toggle Privacy Shield" : isPrivacyMode ? "Disable Privacy Shield" : "Enable Privacy Shield"}
           >
-            🛡️
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+            </svg>
           </button>
         </div>
 
@@ -874,11 +928,13 @@ function Meeting() {
               setShowParticipants(!showParticipants);
               if (showChat) setShowChat(false);
             }}
-            className={`px-3 py-2 rounded-full text-xs font-semibold border transition-all flex items-center gap-2 ${
+            className={`px-3.5 py-2 rounded-full text-xs font-semibold border transition-all flex items-center gap-2 ${
               showParticipants ? "bg-[#8ab4f8] text-[#202124] border-[#8ab4f8]" : "bg-[#2d2f31] hover:bg-[#3c4043] border-[#3c4043] text-slate-200"
             }`}
           >
-            <span>👥</span>
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+            </svg>
             <span className="hidden md:inline">{participants.length}</span>
           </button>
 
@@ -888,11 +944,13 @@ function Meeting() {
               setShowChat(!showChat);
               if (showParticipants) setShowParticipants(false);
             }}
-            className={`px-3 py-2 rounded-full text-xs font-semibold border transition-all flex items-center gap-2 ${
+            className={`px-3.5 py-2 rounded-full text-xs font-semibold border transition-all flex items-center gap-2 ${
               showChat ? "bg-[#8ab4f8] text-[#202124] border-[#8ab4f8]" : "bg-[#2d2f31] hover:bg-[#3c4043] border-[#3c4043] text-slate-200"
             }`}
           >
-            <span>💬</span>
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+            </svg>
             <span className="hidden md:inline">Chat</span>
           </button>
 
@@ -901,7 +959,7 @@ function Meeting() {
             <div className="flex items-center gap-2">
               <button
                 onClick={leaveMeeting}
-                className="px-3 py-2.5 rounded-xl bg-slate-700 hover:bg-slate-600 text-slate-200 font-bold text-xs shadow-lg transition-all"
+                className="px-3.5 py-2.5 rounded-xl bg-slate-700 hover:bg-slate-600 text-slate-200 font-bold text-xs shadow-lg transition-all"
                 title="Leave Meeting (Host leaves room)"
               >
                 Leave
@@ -911,7 +969,9 @@ function Meeting() {
                 className="px-4 py-2.5 rounded-xl bg-red-600 hover:bg-red-500 text-white font-extrabold text-xs shadow-lg transition-all flex items-center gap-1.5 animate-pulse"
                 title="End Meeting for All Participants"
               >
-                <span>🛑</span>
+                <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor" />
+                </svg>
                 <span className="hidden lg:inline">End Meeting</span>
               </button>
             </div>
@@ -921,7 +981,9 @@ function Meeting() {
               className="w-14 h-11 rounded-full bg-red-600 hover:bg-red-500 text-white font-bold text-lg flex items-center justify-center shadow-lg transition-all"
               title="Leave Call"
             >
-              📞
+              <svg className="w-6 h-6 text-white rotate-[135deg]" fill="currentColor" viewBox="0 0 24 24">
+                <path d="M6.62 10.79c1.44 2.83 3.76 5.14 6.59 6.59l2.2-2.2c.27-.27.67-.36 1.02-.24 1.12.37 2.33.57 3.57.57.55 0 1 .45 1 1V20c0 .55-.45 1-1 1-9.39 0-17-7.61-17-17 0-.55.45-1 1-1h3.5c.55 0 1 .45 1 1 0 1.25.2 2.45.57 3.57.11.35.03.74-.25 1.02l-2.2 2.2z"/>
+              </svg>
             </button>
           )}
         </div>

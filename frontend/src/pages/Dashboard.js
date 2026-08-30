@@ -32,6 +32,10 @@ function Dashboard() {
   const [accessError, setAccessError] = useState("");
   const [savingAccess, setSavingAccess] = useState(false);
   const [meetingTitle, setMeetingTitle] = useState("");
+  const [registeredUsers, setRegisteredUsers] = useState([]);
+  const [fetchingUsers, setFetchingUsers] = useState(false);
+  const [userSearchTerm, setUserSearchTerm] = useState("");
+  const [dropdownOpen, setDropdownOpen] = useState(false);
 
   useEffect(() => {
     if (!token) {
@@ -41,8 +45,26 @@ function Dashboard() {
     fetchAnnouncements();
     fetchActiveMeetings();
     fetchMeetingHistory();
+    fetchRegisteredUsers();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token, navigate]);
+
+  const fetchRegisteredUsers = async () => {
+    setFetchingUsers(true);
+    try {
+      const res = await fetch(ENDPOINTS.USER_ALL, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await res.json();
+      if (res.ok && data.users) {
+        setRegisteredUsers(data.users);
+      }
+    } catch (err) {
+      console.error("Fetch registered users error:", err);
+    } finally {
+      setFetchingUsers(false);
+    }
+  };
 
   const fetchAnnouncements = async () => {
     try {
@@ -533,13 +555,103 @@ function Dashboard() {
                 </button>
               </div>
               {meetingAccessMode === "selected" && (
-                <input
-                  type="text"
-                  value={invitedEmails}
-                  onChange={(event) => setInvitedEmails(event.target.value)}
-                  placeholder="user1@example.com, user2@example.com"
-                  className="w-full mt-3 px-4 py-3 rounded-xl bg-[#202124] border border-[#3c4043] text-white text-sm"
-                />
+                <div className="mt-3 space-y-3">
+                  <label className="block text-xs font-medium text-[#bdc1c6] uppercase tracking-wider">
+                    Select Invited Users
+                  </label>
+
+                  {/* Selected User Pills */}
+                  {invitedEmails.trim() && (
+                    <div className="flex flex-wrap gap-1.5 p-2 bg-[#202124] rounded-xl border border-[#3c4043] max-h-24 overflow-y-auto">
+                      {invitedEmails.split(",").map((item) => item.trim()).filter(Boolean).map((emailItem) => (
+                        <span key={emailItem} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[#8ab4f8]/20 text-[#8ab4f8] text-xs font-medium border border-[#8ab4f8]/30">
+                          <span>{emailItem}</span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const updated = invitedEmails.split(",").map(e => e.trim()).filter(e => e.toLowerCase() !== emailItem.toLowerCase());
+                              setInvitedEmails(updated.join(", "));
+                            }}
+                            className="hover:text-white font-bold ml-1"
+                          >
+                            ✕
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Dropdown Toggle / Search */}
+                  <div className="relative">
+                    <button
+                      type="button"
+                      onClick={() => setDropdownOpen(!dropdownOpen)}
+                      className="w-full px-4 py-3 rounded-xl bg-[#202124] border border-[#3c4043] text-left text-sm text-slate-200 flex items-center justify-between hover:border-[#8ab4f8]/50 transition-colors"
+                    >
+                      <span className="truncate">
+                        {fetchingUsers ? "Loading user list..." : "Choose users from registered list..."}
+                      </span>
+                      <svg className={`w-4 h-4 text-slate-400 transition-transform ${dropdownOpen ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                      </svg>
+                    </button>
+
+                    {dropdownOpen && (
+                      <div className="absolute top-full left-0 right-0 mt-1 bg-[#202124] border border-[#3c4043] rounded-xl shadow-2xl z-50 p-2 max-h-60 overflow-y-auto space-y-1">
+                        <input
+                          type="text"
+                          placeholder="Search name or email..."
+                          value={userSearchTerm}
+                          onChange={(e) => setUserSearchTerm(e.target.value)}
+                          className="w-full px-3 py-2 text-xs rounded-lg bg-[#2d2f31] border border-[#3c4043] text-white focus:outline-none focus:border-[#8ab4f8] mb-2"
+                        />
+
+                        {registeredUsers.length === 0 ? (
+                          <p className="text-xs text-[#9aa0a6] py-3 text-center">No other registered users found</p>
+                        ) : (
+                          registeredUsers
+                            .filter(u => u.name?.toLowerCase().includes(userSearchTerm.toLowerCase()) || u.email?.toLowerCase().includes(userSearchTerm.toLowerCase()))
+                            .map((userItem) => {
+                              const currentSelected = invitedEmails.split(",").map(e => e.trim().toLowerCase()).filter(Boolean);
+                              const isSelected = currentSelected.includes(userItem.email.toLowerCase());
+                              return (
+                                <div
+                                  key={userItem.email}
+                                  onClick={() => {
+                                    let updated;
+                                    if (isSelected) {
+                                      updated = currentSelected.filter(e => e !== userItem.email.toLowerCase());
+                                    } else {
+                                      updated = [...currentSelected, userItem.email.toLowerCase()];
+                                    }
+                                    setInvitedEmails(updated.join(", "));
+                                  }}
+                                  className={`p-2.5 rounded-lg cursor-pointer flex items-center justify-between text-xs transition-all ${isSelected ? "bg-[#1a73e8]/20 border border-[#1a73e8]/40" : "hover:bg-[#2d2f31]"}`}
+                                >
+                                  <div>
+                                    <p className="font-medium text-slate-200">{userItem.name}</p>
+                                    <p className="text-[11px] text-slate-400">{userItem.email}</p>
+                                  </div>
+                                  <div className={`w-4 h-4 rounded border flex items-center justify-center ${isSelected ? "bg-[#1a73e8] border-[#1a73e8] text-white" : "border-[#3c4043]"}`}>
+                                    {isSelected && <span className="text-[10px] font-bold">✓</span>}
+                                  </div>
+                                </div>
+                              );
+                            })
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Manual email fallback */}
+                  <input
+                    type="text"
+                    value={invitedEmails}
+                    onChange={(event) => setInvitedEmails(event.target.value)}
+                    placeholder="Or type emails manually (comma separated)"
+                    className="w-full px-4 py-2.5 rounded-xl bg-[#202124] border border-[#3c4043] text-white text-xs"
+                  />
+                </div>
               )}
               {accessError && <p className="text-xs text-red-300 mt-2">{accessError}</p>}
             </div>

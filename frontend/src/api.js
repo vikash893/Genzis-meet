@@ -5,6 +5,7 @@ export const API_BASE_URL = configuredApiUrl.replace(/\/+$/, "");
 export const ENDPOINTS = {
   USER_LOGIN: `${API_BASE_URL}/api/user/login`,
   USER_REGISTER: `${API_BASE_URL}/api/user/register`,
+  USER_ALL: `${API_BASE_URL}/api/user/all`,
   ADMIN_LOGIN: `${API_BASE_URL}/api/admin/admin-login`,
   ADMIN_REGISTER_USER: `${API_BASE_URL}/api/admin/Register-user`,
   ADMIN_CREATE_ADMIN: `${API_BASE_URL}/api/admin/create-admin`,
