@@ -139,7 +139,7 @@ function Meeting() {
     peerConnectionsRef.current.set(targetSocketId, peerConnection);
 
     peerConnection.ontrack = (event) => {
-      const stream = event.streams[0];
+      const stream = event.streams[0] || (event.track ? new MediaStream([event.track]) : null);
       if (!stream) return;
 
       const participant = participantsRef.current.find((u) => u.socketId === targetSocketId);
@@ -196,27 +196,17 @@ function Meeting() {
         const pc = createPeerConnection(fromSocketId);
         syncLocalTracksToPeers();
 
-        if (pc.signalingState === "have-local-offer") {
-          try {
-            await pc.setLocalDescription({ type: "rollback" });
-          } catch (rbErr) {
-            console.warn("Offer collision rollback warning:", rbErr);
-          }
+        await pc.setRemoteDescription(new RTCSessionDescription(offer));
+
+        const pending = pendingCandidatesRef.current.get(fromSocketId) || [];
+        for (const cand of pending) {
+          try { await pc.addIceCandidate(new RTCIceCandidate(cand)); } catch (e) {}
         }
+        pendingCandidatesRef.current.delete(fromSocketId);
 
-        if (pc.signalingState === "stable" || pc.signalingState === "have-local-offer") {
-          await pc.setRemoteDescription(new RTCSessionDescription(offer));
-
-          const pending = pendingCandidatesRef.current.get(fromSocketId) || [];
-          for (const cand of pending) {
-            try { await pc.addIceCandidate(new RTCIceCandidate(cand)); } catch (e) {}
-          }
-          pendingCandidatesRef.current.delete(fromSocketId);
-
-          const answer = await pc.createAnswer();
-          await pc.setLocalDescription(answer);
-          socket.emit("answer", { targetSocketId: fromSocketId, answer });
-        }
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        socket.emit("answer", { targetSocketId: fromSocketId, answer });
       } catch (err) {
         console.error("Offer error:", err);
       }
@@ -234,8 +224,6 @@ function Meeting() {
               try { await pc.addIceCandidate(new RTCIceCandidate(cand)); } catch (e) {}
             }
             pendingCandidatesRef.current.delete(fromSocketId);
-          } else {
-            console.warn(`Skipping answer for ${fromSocketId} because signalingState is ${pc.signalingState}`);
           }
         } catch (err) {
           console.error("Answer set error:", err);
@@ -263,20 +251,17 @@ function Meeting() {
       setParticipants(users);
       participantsRef.current = users;
 
-      users.forEach(async (u) => {
-        if (u.socketId !== socket.id && !peerConnectionsRef.current.has(u.socketId)) {
-          if (socket.id && socket.id > u.socketId) {
-            try {
-              const pc = createPeerConnection(u.socketId);
-              syncLocalTracksToPeers();
-              const offer = await pc.createOffer();
-              await pc.setLocalDescription(offer);
-              socket.emit("offer", { targetSocketId: u.socketId, offer });
-            } catch (e) {
-              console.error("Fallback offer error:", e);
-            }
+      // Update emails for any existing remote streams
+      setRemoteStreams((prev) => {
+        let hasChanges = false;
+        const updated = { ...prev };
+        users.forEach((u) => {
+          if (updated[u.socketId] && updated[u.socketId].email !== u.email) {
+            updated[u.socketId] = { ...updated[u.socketId], email: u.email };
+            hasChanges = true;
           }
-        }
+        });
+        return hasChanges ? updated : prev;
       });
     };
 
@@ -386,26 +371,41 @@ function Meeting() {
 
     const startMeeting = async () => {
       connectSocket();
+      let stream = null;
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({
+        stream = await navigator.mediaDevices.getUserMedia({
           video: true,
           audio: true
         });
+      } catch (err1) {
+        console.warn("Could not get video and audio, trying video only:", err1);
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+        } catch (err2) {
+          console.warn("Could not get video, trying audio only:", err2);
+          try {
+            stream = await navigator.mediaDevices.getUserMedia({ video: false, audio: true });
+          } catch (err3) {
+            console.error("Camera and mic unavailable:", err3);
+            setIsCameraOff(true);
+            setIsMuted(true);
+          }
+        }
+      }
 
+      if (stream) {
         localStreamRef.current = stream;
         if (localVideoRef.current) {
           localVideoRef.current.srcObject = stream;
+          localVideoRef.current.play().catch(() => {});
         }
-
         syncLocalTracksToPeers();
+      }
 
-        if (!hasJoinedMeetingRef.current) {
-          hasJoinedMeetingRef.current = true;
-          const activePasscode = passcodeRef.current || sessionStorage.getItem(`meeting_passcode_${meetingId}`) || "";
-          socket.emit("join-meeting", { meetingId, passcode: activePasscode });
-        }
-      } catch (err) {
-        console.error("Camera/Mic error:", err);
+      if (!hasJoinedMeetingRef.current) {
+        hasJoinedMeetingRef.current = true;
+        const activePasscode = passcodeRef.current || sessionStorage.getItem(`meeting_passcode_${meetingId}`) || "";
+        socket.emit("join-meeting", { meetingId, passcode: activePasscode });
       }
     };
 
@@ -477,6 +477,15 @@ function Meeting() {
       recognition.stop();
     };
   }, [meetingId]);
+
+  // Keep local video element synchronized with active stream
+  useEffect(() => {
+    const activeStream = screenStreamRef.current || localStreamRef.current;
+    if (localVideoRef.current && activeStream) {
+      localVideoRef.current.srcObject = activeStream;
+      localVideoRef.current.play().catch(() => {});
+    }
+  }, [isCameraOff, isScreenSharing]);
 
   // Controls Handlers
   const toggleMicrophone = () => {

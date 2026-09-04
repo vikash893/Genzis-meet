@@ -13,6 +13,9 @@ function RemoteVideo({
   useEffect(() => {
     if (videoRef.current && stream) {
       videoRef.current.srcObject = stream;
+      videoRef.current.play().catch((err) => {
+        console.warn("Remote video play warning:", err);
+      });
     }
   }, [stream]);
 
