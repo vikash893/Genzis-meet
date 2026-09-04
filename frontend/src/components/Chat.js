@@ -1,46 +1,27 @@
 import { useEffect, useState, useRef } from "react";
 import socket from "../socket";
 
-function Chat({ meetingId, email, onClose }) {
+function Chat({ meetingId, email, onClose, messages = [], onSendMessage }) {
   const [message, setMessage] = useState("");
-  const [messages, setMessages] = useState([]);
   const [connected, setConnected] = useState(socket.connected);
   const messagesEndRef = useRef(null);
+  const activeEmail = email || localStorage.getItem("userEmail") || "User";
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
 
   useEffect(() => {
-    const handleReceiveMessage = (chatMessage) => {
-      setMessages((prev) => {
-        // Match by message ID or (if ID missing) timestamp + email + text match
-        if (prev.some((item) => item.id === chatMessage.id || (item.timestamp === chatMessage.timestamp && item.email === chatMessage.email && item.message === chatMessage.message))) {
-          return prev;
-        }
-        return [...prev, chatMessage];
-      });
-    };
-
-    const handleChatHistory = (chatHistory) => {
-      setMessages(chatHistory || []);
-    };
-
+    setConnected(socket.connected);
     const handleConnect = () => setConnected(true);
     const handleDisconnect = () => setConnected(false);
 
     socket.on("connect", handleConnect);
     socket.on("disconnect", handleDisconnect);
-    socket.on("receive-message", handleReceiveMessage);
-    socket.on("chat-history", handleChatHistory);
-
-    if (socket.connected) setConnected(true);
 
     return () => {
       socket.off("connect", handleConnect);
       socket.off("disconnect", handleDisconnect);
-      socket.off("receive-message", handleReceiveMessage);
-      socket.off("chat-history", handleChatHistory);
     };
   }, []);
 
@@ -56,20 +37,17 @@ function Chat({ meetingId, email, onClose }) {
     const messageId = `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
     const chatMessage = {
       id: messageId,
-      email: email,
+      email: activeEmail,
       meetingId: meetingId,
       message: cleanMessage,
       timestamp: new Date().toISOString()
     };
 
-    // Instant local rendering (Optimistic UI)
-    setMessages((prev) => {
-      if (prev.some((item) => item.id === chatMessage.id)) return prev;
-      return [...prev, chatMessage];
-    });
-
-    // Sub-second Socket Emit to Backend
-    socket.emit("send-message", chatMessage);
+    if (onSendMessage) {
+      onSendMessage(chatMessage);
+    } else {
+      socket.emit("send-message", chatMessage);
+    }
     setMessage("");
   };
 

@@ -246,6 +246,43 @@ meetingRouter.post(
 );
 
 meetingRouter.get(
+    "/:meetingId/recording",
+    authMiddleware,
+    async (req, res) => {
+        try {
+            const meeting = await Meeting.findOne({ meetingId: req.params.meetingId });
+            if (!meeting) return res.status(404).json({ message: "Meeting not found" });
+
+            const Recording = require("../models/recording");
+            const recording = await Recording.findOne({ meetingId: req.params.meetingId }).lean();
+            if (!recording) return res.status(404).json({ message: "Recording not found" });
+
+            if (meeting.hostemail.toLowerCase() !== req.user.email.toLowerCase()) {
+                return res.status(403).json({ message: "Only the host can download the recording" });
+            }
+
+            if (!mongoose.connection.db) return res.status(503).json({ message: "Database is not ready" });
+
+            const bucket = new mongoose.mongo.GridFSBucket(mongoose.connection.db, { bucketName: "meetingRecordings" });
+            const downloadStream = bucket.openDownloadStream(new mongoose.Types.ObjectId(recording.fileId));
+
+            res.setHeader("Content-Type", recording.mimeType || "video/webm");
+            res.setHeader("Content-Disposition", `attachment; filename="NexusMeet-Recording-${meeting.meetingId}.webm"`);
+
+            downloadStream.on("error", (err) => {
+                console.error("GridFS download error:", err);
+                if (!res.headersSent) res.status(500).json({ message: "Failed to download recording" });
+            });
+
+            return downloadStream.pipe(res);
+        } catch (error) {
+            console.error("Download recording error:", error);
+            return res.status(500).json({ message: "Failed to download recording" });
+        }
+    }
+);
+
+meetingRouter.get(
     "/history/:meetingId.csv",
     authMiddleware,
     async (req, res) => {

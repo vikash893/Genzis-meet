@@ -20,36 +20,64 @@ const router = require("./routers/health");
 
 const chatEncryptionKey = crypto
     .createHash("sha256")
-    .update(process.env.CHAT_ENCRYPTION_KEY || process.env.JWT_SECRET || "change-this-chat-key")
+    .update(process.env.CHAT_ENCRYPTION_KEY || process.env.JWT_SECRET || "genzis-meet-secure-chat-key-2026")
     .digest();
 
 function encryptChatMessage(message) {
-    const iv = crypto.randomBytes(12);
-    const cipher = crypto.createCipheriv("aes-256-gcm", chatEncryptionKey, iv);
-    const encryptedMessage = Buffer.concat([
-        cipher.update(message, "utf8"),
-        cipher.final()
-    ]);
+    try {
+        const iv = crypto.randomBytes(12);
+        const cipher = crypto.createCipheriv("aes-256-gcm", chatEncryptionKey, iv);
+        const encryptedMessage = Buffer.concat([
+            cipher.update(message, "utf8"),
+            cipher.final()
+        ]);
 
-    return {
-        encryptedMessage: encryptedMessage.toString("base64"),
-        iv: iv.toString("base64"),
-        authTag: cipher.getAuthTag().toString("base64")
-    };
+        return {
+            encryptedMessage: encryptedMessage.toString("base64"),
+            iv: iv.toString("base64"),
+            authTag: cipher.getAuthTag().toString("base64")
+        };
+    } catch (err) {
+        console.error("Encryption error:", err);
+        return {
+            encryptedMessage: Buffer.from(message, "utf8").toString("base64"),
+            iv: "plain",
+            authTag: "plain"
+        };
+    }
 }
 
 function decryptChatMessage(chatMessage) {
-    const decipher = crypto.createDecipheriv(
-        "aes-256-gcm",
-        chatEncryptionKey,
-        Buffer.from(chatMessage.iv, "base64")
-    );
-    decipher.setAuthTag(Buffer.from(chatMessage.authTag, "base64"));
+    if (!chatMessage || !chatMessage.encryptedMessage) {
+        return chatMessage?.message || "";
+    }
+    if (chatMessage.iv === "plain" || chatMessage.authTag === "plain") {
+        try {
+            return Buffer.from(chatMessage.encryptedMessage, "base64").toString("utf8");
+        } catch {
+            return chatMessage.encryptedMessage;
+        }
+    }
+    try {
+        const decipher = crypto.createDecipheriv(
+            "aes-256-gcm",
+            chatEncryptionKey,
+            Buffer.from(chatMessage.iv, "base64")
+        );
+        decipher.setAuthTag(Buffer.from(chatMessage.authTag, "base64"));
 
-    return Buffer.concat([
-        decipher.update(Buffer.from(chatMessage.encryptedMessage, "base64")),
-        decipher.final()
-    ]).toString("utf8");
+        return Buffer.concat([
+            decipher.update(Buffer.from(chatMessage.encryptedMessage, "base64")),
+            decipher.final()
+        ]).toString("utf8");
+    } catch (err) {
+        // Fallback if key changed or data was plaintext
+        try {
+            return Buffer.from(chatMessage.encryptedMessage, "base64").toString("utf8");
+        } catch {
+            return chatMessage.message || "[Message unavailable]";
+        }
+    }
 }
 
 
@@ -118,6 +146,8 @@ const httpServer =
 const io = new Server(
     httpServer,
     {
+        pingTimeout: 60000,
+        pingInterval: 25000,
         cors: {
             origin: "*",
             methods: [
@@ -281,8 +311,12 @@ io.on(
 
 
                 // ------------------------------------------
-                // Check duplicate socket
+                // Check duplicate socket / email reconnect
                 // ------------------------------------------
+
+                const existingUserByEmail = users.find(
+                    user => user.email && user.email.toLowerCase() === email.toLowerCase()
+                );
 
                 const alreadyJoined =
                     users.some(
@@ -293,19 +327,15 @@ io.on(
 
 
                 // ------------------------------------------
-                // Add user
+                // Add or update user
                 // ------------------------------------------
 
-                if (!alreadyJoined) {
-
+                if (existingUserByEmail) {
+                    existingUserByEmail.socketId = socket.id;
+                } else if (!alreadyJoined) {
                     users.push({
-
-                        socketId:
-                            socket.id,
-
-                        email:
-                            email
-
+                        socketId: socket.id,
+                        email: email
                     });
 
                     try {
@@ -315,21 +345,21 @@ io.on(
                             email,
                             joinedAt
                         });
-                        await User.findByIdAndUpdate(socket.user.id, {
-                            $push: {
-                                meetingHistory: {
-                                    meetingId,
-                                    title: meetingRecord.title || "Untitled meeting",
-                                    joinedAt
+                        if (socket.user && socket.user.id) {
+                            await User.findByIdAndUpdate(socket.user.id, {
+                                $push: {
+                                    meetingHistory: {
+                                        meetingId,
+                                        title: meetingRecord.title || "Untitled meeting",
+                                        joinedAt
+                                    }
                                 }
-                            }
-                        });
+                            });
+                        }
                     } catch (error) {
                         console.error("Attendance save error:", error);
                     }
-
                 }
-
 
                 console.log(
                     "Participants in meeting:",
@@ -338,7 +368,7 @@ io.on(
 
 
                 // ------------------------------------------
-                // Send participant list
+                // Send participant list & meeting info
                 // ------------------------------------------
 
                 socket.emit("meeting-info", {
@@ -352,13 +382,25 @@ io.on(
                         .sort({ sentAt: 1 })
                         .lean();
 
-                    const chatHistory = savedMessages.map((savedMessage) => ({
-                        id: savedMessage.messageId,
-                        meetingId: savedMessage.meetingId,
-                        email: savedMessage.senderEmail,
-                        message: decryptChatMessage(savedMessage),
-                        timestamp: savedMessage.sentAt.toISOString()
-                    }));
+                    const chatHistory = savedMessages.map((savedMessage) => {
+                        try {
+                            return {
+                                id: savedMessage.messageId || `${savedMessage._id}`,
+                                meetingId: savedMessage.meetingId,
+                                email: savedMessage.senderEmail,
+                                message: decryptChatMessage(savedMessage),
+                                timestamp: savedMessage.sentAt ? savedMessage.sentAt.toISOString() : new Date().toISOString()
+                            };
+                        } catch {
+                            return {
+                                id: savedMessage.messageId || `${savedMessage._id}`,
+                                meetingId: savedMessage.meetingId,
+                                email: savedMessage.senderEmail,
+                                message: savedMessage.message || "[Message unavailable]",
+                                timestamp: savedMessage.sentAt ? savedMessage.sentAt.toISOString() : new Date().toISOString()
+                            };
+                        }
+                    });
 
                     socket.emit("chat-history", chatHistory);
                 } catch (error) {
@@ -392,27 +434,21 @@ io.on(
 
 
                 // ------------------------------------------
-                // Tell existing users
-                // new user joined
+                // Tell existing users new user joined
                 // ------------------------------------------
 
                 if (!alreadyJoined) {
-
                     socket.to(
                         meetingId
                     ).emit(
                         "user-joined",
                         {
-
                             socketId:
                                 socket.id,
-
                             email:
                                 email
-
                         }
                     );
-
                 }
 
             }
@@ -780,45 +816,43 @@ io.on(
                 // Find meeting
                 // ------------------------------------------
 
-                const users =
+                let users =
                     meetingUsers.get(
                         meetingId
                     );
 
-
                 if (!users) {
-
-                    console.log(
-                        "Meeting not found:",
-                        meetingId
-                    );
-
-                    return;
-
+                    users = [];
+                    meetingUsers.set(meetingId, users);
                 }
-
 
                 // ------------------------------------------
                 // Check sender
                 // ------------------------------------------
 
-                const sender =
+                let sender =
                     users.find(
                         user =>
                             user.socketId ===
                             socket.id
                     );
 
-
-                // Create chat message
                 if (!sender) {
-                    console.log("Rejected chat from a socket outside the meeting:", socket.id);
-                    return;
+                    const userEmail = socket.user ? socket.user.email : null;
+                    if (userEmail) {
+                        sender = users.find(user => user.email && user.email.toLowerCase() === userEmail.toLowerCase());
+                        if (sender) {
+                            sender.socketId = socket.id;
+                        } else {
+                            sender = { socketId: socket.id, email: userEmail };
+                            users.push(sender);
+                        }
+                    }
                 }
 
-                const senderEmail = sender.email;
+                const senderEmail = sender ? sender.email : (socket.user && socket.user.email) || "Guest User";
                 const cleanMessage = message.trim();
-                const messageId = id || `${Date.now()}-${socket.id}`;
+                const messageId = id || `${Date.now()}-${socket.id}-${Math.random().toString(36).substring(2, 7)}`;
                 const sentAt = timestamp ? new Date(timestamp) : new Date();
 
                 if (Number.isNaN(sentAt.getTime())) {
@@ -836,8 +870,6 @@ io.on(
                     });
                 } catch (error) {
                     console.error("Chat message save error:", error);
-                    socket.emit("chat-save-error", { message: "Message could not be saved" });
-                    return;
                 }
 
                 const chatMessage = {
@@ -850,7 +882,6 @@ io.on(
 
                 // Broadcast message to EVERYONE in the meeting room
                 io.to(meetingId).emit("receive-message", chatMessage);
-
 
                 console.log(
                     "Message broadcast completed"
@@ -868,10 +899,11 @@ io.on(
             console.log("User disconnected:", socket.id);
 
             for (const [meetingId, users] of meetingUsers) {
-                const disconnectedUser = users.find((user) => user.socketId === socket.id);
-                if (!disconnectedUser) continue;
+                const disconnectedIndex = users.findIndex((user) => user.socketId === socket.id);
+                if (disconnectedIndex === -1) continue;
 
-                const updatedUsers = users.filter((user) => user.socketId !== socket.id);
+                const disconnectedUser = users[disconnectedIndex];
+                users.splice(disconnectedIndex, 1);
 
                 try {
                     const leftAt = new Date();
@@ -880,23 +912,24 @@ io.on(
                         { leftAt },
                         { sort: { joinedAt: -1 } }
                     );
-                    await User.findOneAndUpdate(
-                        { _id: socket.user.id, "meetingHistory.meetingId": meetingId, "meetingHistory.leftAt": null },
-                        { $set: { "meetingHistory.$.leftAt": leftAt } },
-                        { sort: { "meetingHistory.joinedAt": -1 } }
-                    );
+                    if (socket.user && socket.user.id) {
+                        await User.findOneAndUpdate(
+                            { _id: socket.user.id, "meetingHistory.meetingId": meetingId, "meetingHistory.leftAt": null },
+                            { $set: { "meetingHistory.$.leftAt": leftAt } },
+                            { sort: { "meetingHistory.joinedAt": -1 } }
+                        );
+                    }
                 } catch (error) {
                     console.error("Attendance close error:", error);
                 }
 
-                if (updatedUsers.length === 0) {
+                if (users.length === 0) {
                     meetingUsers.delete(meetingId);
                     meetingHosts.delete(meetingId);
                     console.log(`Meeting ${meetingId} is now empty`);
                 } else {
-                    meetingUsers.set(meetingId, updatedUsers);
-                    io.to(meetingId).emit("participants", updatedUsers);
-                    io.to(meetingId).emit("user-left", { socketId: socket.id });
+                    io.to(meetingId).emit("participants", users);
+                    io.to(meetingId).emit("user-left", { socketId: socket.id, email: disconnectedUser.email });
                 }
             }
         });

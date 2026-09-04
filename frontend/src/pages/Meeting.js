@@ -21,13 +21,21 @@ function Meeting() {
   const location = useLocation();
   const navigate = useNavigate();
 
-  // Parse URL search params (e.g. ?passcode=1234)
+  // Parse URL search params & fallback to sessionStorage to survive page refresh
   const searchParams = new URLSearchParams(location.search);
-  const urlPasscode = searchParams.get("passcode") || location.state?.passcode || "";
+  const storedPasscode = sessionStorage.getItem(`meeting_passcode_${meetingId}`) || "";
+  const initialPasscode = searchParams.get("passcode") || location.state?.passcode || storedPasscode || "";
+
+  if (initialPasscode) {
+    sessionStorage.setItem(`meeting_passcode_${meetingId}`, initialPasscode);
+  }
 
   // User credentials
   const email = location.state?.email || localStorage.getItem("userEmail") || "Guest User";
-  const [meetingPasscode, setMeetingPasscode] = useState(urlPasscode);
+  const [meetingPasscode, setMeetingPasscode] = useState(initialPasscode);
+  const passcodeRef = useRef(initialPasscode);
+  passcodeRef.current = meetingPasscode || initialPasscode;
+
   const [meetingTitle, setMeetingTitle] = useState("Untitled meeting");
   const [currentSubtitle, setCurrentSubtitle] = useState(null);
   const speechRecognitionRef = useRef(null);
@@ -37,6 +45,7 @@ function Meeting() {
   const localStreamRef = useRef(null);
   const screenStreamRef = useRef(null);
   const peerConnectionsRef = useRef(new Map());
+  const pendingCandidatesRef = useRef(new Map());
   const participantsRef = useRef([]);
 
   // MediaRecorder Refs
@@ -47,6 +56,7 @@ function Meeting() {
   // States
   const [remoteStreams, setRemoteStreams] = useState({});
   const [participants, setParticipants] = useState([]);
+  const [chatMessages, setChatMessages] = useState([]);
   const [isMuted, setIsMuted] = useState(false);
   const [isCameraOff, setIsCameraOff] = useState(false);
   const [isScreenSharing, setIsScreenSharing] = useState(false);
@@ -76,6 +86,26 @@ function Meeting() {
 
   const hasJoinedMeetingRef = useRef(false);
 
+  const syncLocalTracksToPeers = useCallback(() => {
+    const activeStream = screenStreamRef.current || localStreamRef.current;
+    if (!activeStream) return;
+
+    peerConnectionsRef.current.forEach((pc) => {
+      activeStream.getTracks().forEach((track) => {
+        const senders = pc.getSenders();
+        const alreadyAdded = senders.some((s) => s.track && s.track.kind === track.kind);
+        if (!alreadyAdded) {
+          pc.addTrack(track, activeStream);
+        } else {
+          const sender = senders.find((s) => s.track && s.track.kind === track.kind);
+          if (sender && sender.track !== track) {
+            sender.replaceTrack(track);
+          }
+        }
+      });
+    });
+  }, []);
+
   // Create WebRTC Peer Connection
   const createPeerConnection = useCallback((targetSocketId) => {
     if (peerConnectionsRef.current.has(targetSocketId)) {
@@ -85,7 +115,10 @@ function Meeting() {
     const peerConnection = new RTCPeerConnection({
       iceServers: [
         { urls: "stun:stun.l.google.com:19302" },
-        { urls: "stun:stun1.l.google.com:19302" }
+        { urls: "stun:stun1.l.google.com:19302" },
+        { urls: "stun:stun2.l.google.com:19302" },
+        { urls: "stun:stun3.l.google.com:19302" },
+        { urls: "stun:stun4.l.google.com:19302" }
       ]
     });
 
@@ -94,6 +127,13 @@ function Meeting() {
       activeStream.getTracks().forEach((track) => {
         peerConnection.addTrack(track, activeStream);
       });
+    } else {
+      try {
+        peerConnection.addTransceiver("audio", { direction: "sendrecv" });
+        peerConnection.addTransceiver("video", { direction: "sendrecv" });
+      } catch (e) {
+        console.warn("Transceiver fallback warning:", e);
+      }
     }
 
     peerConnectionsRef.current.set(targetSocketId, peerConnection);
@@ -125,6 +165,7 @@ function Meeting() {
         peerConnection.connectionState === "closed"
       ) {
         peerConnectionsRef.current.delete(targetSocketId);
+        pendingCandidatesRef.current.delete(targetSocketId);
         setRemoteStreams((prev) => {
           const updated = { ...prev };
           delete updated[targetSocketId];
@@ -141,6 +182,7 @@ function Meeting() {
     const handleUserJoined = async (user) => {
       try {
         const pc = createPeerConnection(user.socketId);
+        syncLocalTracksToPeers();
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
         socket.emit("offer", { targetSocketId: user.socketId, offer });
@@ -152,7 +194,15 @@ function Meeting() {
     const handleOffer = async ({ fromSocketId, offer }) => {
       try {
         const pc = createPeerConnection(fromSocketId);
+        syncLocalTracksToPeers();
         await pc.setRemoteDescription(new RTCSessionDescription(offer));
+
+        const pending = pendingCandidatesRef.current.get(fromSocketId) || [];
+        for (const cand of pending) {
+          try { await pc.addIceCandidate(new RTCIceCandidate(cand)); } catch (e) {}
+        }
+        pendingCandidatesRef.current.delete(fromSocketId);
+
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
         socket.emit("answer", { targetSocketId: fromSocketId, answer });
@@ -166,6 +216,12 @@ function Meeting() {
       if (pc) {
         try {
           await pc.setRemoteDescription(new RTCSessionDescription(answer));
+
+          const pending = pendingCandidatesRef.current.get(fromSocketId) || [];
+          for (const cand of pending) {
+            try { await pc.addIceCandidate(new RTCIceCandidate(cand)); } catch (e) {}
+          }
+          pendingCandidatesRef.current.delete(fromSocketId);
         } catch (err) {
           console.error("Answer set error:", err);
         }
@@ -174,24 +230,59 @@ function Meeting() {
 
     const handleIceCandidate = async ({ fromSocketId, candidate }) => {
       const pc = peerConnectionsRef.current.get(fromSocketId);
-      if (pc) {
+      if (pc && pc.remoteDescription && pc.remoteDescription.type) {
         try {
           await pc.addIceCandidate(new RTCIceCandidate(candidate));
         } catch (err) {
           console.error("ICE add error:", err);
         }
+      } else {
+        if (!pendingCandidatesRef.current.has(fromSocketId)) {
+          pendingCandidatesRef.current.set(fromSocketId, []);
+        }
+        pendingCandidatesRef.current.get(fromSocketId).push(candidate);
       }
     };
 
     const handleParticipants = (users) => {
       setParticipants(users);
       participantsRef.current = users;
+
+      users.forEach(async (u) => {
+        if (u.socketId !== socket.id && !peerConnectionsRef.current.has(u.socketId)) {
+          if (socket.id && socket.id > u.socketId) {
+            try {
+              const pc = createPeerConnection(u.socketId);
+              syncLocalTracksToPeers();
+              const offer = await pc.createOffer();
+              await pc.setLocalDescription(offer);
+              socket.emit("offer", { targetSocketId: u.socketId, offer });
+            } catch (e) {
+              console.error("Fallback offer error:", e);
+            }
+          }
+        }
+      });
+    };
+
+    const handleChatHistory = (history) => {
+      setChatMessages(history || []);
+    };
+
+    const handleReceiveMessage = (chatMessage) => {
+      setChatMessages((prev) => {
+        if (prev.some((item) => item.id === chatMessage.id || (item.timestamp === chatMessage.timestamp && item.email === chatMessage.email && item.message === chatMessage.message))) {
+          return prev;
+        }
+        return [...prev, chatMessage];
+      });
     };
 
     const handleUserLeft = ({ socketId }) => {
       const pc = peerConnectionsRef.current.get(socketId);
       if (pc) pc.close();
       peerConnectionsRef.current.delete(socketId);
+      pendingCandidatesRef.current.delete(socketId);
 
       setRemoteStreams((prev) => {
         const updated = { ...prev };
@@ -238,8 +329,13 @@ function Meeting() {
 
     const handleMeetingInfo = ({ title, passcode }) => {
       setMeetingTitle(title || "Untitled meeting");
-      if (passcode) setMeetingPasscode(passcode);
+      if (passcode) {
+        setMeetingPasscode(passcode);
+        passcodeRef.current = passcode;
+        sessionStorage.setItem(`meeting_passcode_${meetingId}`, passcode);
+      }
     };
+
     const handleSubtitle = (subtitle) => {
       setCurrentSubtitle(subtitle);
     };
@@ -249,6 +345,12 @@ function Meeting() {
       leaveMeeting();
     };
 
+    const handleConnect = () => {
+      const activePasscode = passcodeRef.current || sessionStorage.getItem(`meeting_passcode_${meetingId}`) || "";
+      socket.emit("join-meeting", { meetingId, passcode: activePasscode });
+    };
+
+    socket.on("connect", handleConnect);
     socket.on("user-joined", handleUserJoined);
     socket.on("offer", handleOffer);
     socket.on("answer", handleAnswer);
@@ -264,6 +366,8 @@ function Meeting() {
     socket.on("meeting-access-denied", handleMeetingAccessDenied);
     socket.on("meeting-info", handleMeetingInfo);
     socket.on("subtitle", handleSubtitle);
+    socket.on("chat-history", handleChatHistory);
+    socket.on("receive-message", handleReceiveMessage);
 
     const startMeeting = async () => {
       connectSocket();
@@ -278,9 +382,12 @@ function Meeting() {
           localVideoRef.current.srcObject = stream;
         }
 
+        syncLocalTracksToPeers();
+
         if (!hasJoinedMeetingRef.current) {
           hasJoinedMeetingRef.current = true;
-          socket.emit("join-meeting", { meetingId, passcode: urlPasscode });
+          const activePasscode = passcodeRef.current || sessionStorage.getItem(`meeting_passcode_${meetingId}`) || "";
+          socket.emit("join-meeting", { meetingId, passcode: activePasscode });
         }
       } catch (err) {
         console.error("Camera/Mic error:", err);
@@ -291,6 +398,7 @@ function Meeting() {
 
     return () => {
       hasJoinedMeetingRef.current = false;
+      socket.off("connect", handleConnect);
       socket.off("user-joined", handleUserJoined);
       socket.off("offer", handleOffer);
       socket.off("answer", handleAnswer);
@@ -306,6 +414,8 @@ function Meeting() {
       socket.off("meeting-access-denied", handleMeetingAccessDenied);
       socket.off("meeting-info", handleMeetingInfo);
       socket.off("subtitle", handleSubtitle);
+      socket.off("chat-history", handleChatHistory);
+      socket.off("receive-message", handleReceiveMessage);
 
       if (localStreamRef.current) {
         localStreamRef.current.getTracks().forEach((track) => track.stop());
@@ -315,9 +425,10 @@ function Meeting() {
       }
       peerConnectionsRef.current.forEach((pc) => pc.close());
       peerConnectionsRef.current.clear();
+      pendingCandidatesRef.current.clear();
       // eslint-disable-next-line react-hooks/exhaustive-deps
     };
-  }, [meetingId, email, urlPasscode, createPeerConnection]);
+  }, [meetingId, email, createPeerConnection, syncLocalTracksToPeers]);
 
   useEffect(() => {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -339,7 +450,7 @@ function Meeting() {
     };
     recognition.onerror = (error) => console.warn("Speech recognition unavailable:", error.error);
     recognition.onend = () => {
-      if (hasJoinedMeetingRef.current) {
+      if (speechRecognitionRef.current) {
         try { recognition.start(); } catch (error) { /* Browser may already be restarting. */ }
       }
     };
@@ -347,9 +458,8 @@ function Meeting() {
     try { recognition.start(); } catch (error) { console.warn("Speech recognition start failed", error); }
 
     return () => {
-      hasJoinedMeetingRef.current = false;
-      recognition.stop();
       speechRecognitionRef.current = null;
+      recognition.stop();
     };
   }, [meetingId]);
 
@@ -434,6 +544,28 @@ function Meeting() {
   const sendEmojiReaction = (emoji) => {
     socket.emit("send-reaction", { meetingId, email, emoji });
     setShowReactionsMenu(false);
+  };
+
+  const handleSendChatMessage = (chatMsg) => {
+    setChatMessages((prev) => {
+      if (prev.some((item) => item.id === chatMsg.id)) return prev;
+      return [...prev, chatMsg];
+    });
+    socket.emit("send-message", chatMsg);
+  };
+
+  const togglePictureInPicture = async () => {
+    try {
+      if (document.pictureInPictureElement) {
+        await document.exitPictureInPicture();
+      } else if (localVideoRef.current && document.pictureInPictureEnabled) {
+        await localVideoRef.current.requestPictureInPicture();
+      } else {
+        alert("Picture-in-Picture is not supported in this browser.");
+      }
+    } catch (err) {
+      console.error("Picture-in-Picture error:", err);
+    }
   };
 
   // Toggle Host Privacy Shield (Host Only)
@@ -726,11 +858,15 @@ function Meeting() {
         </main>
 
         {/* SIDE DRAWER: IN-CALL CHAT */}
-        {showChat && (
-          <div className="absolute top-0 right-0 bottom-0 z-40 w-full md:w-80">
-            <Chat meetingId={meetingId} email={email} onClose={() => setShowChat(false)} />
-          </div>
-        )}
+        <div className={`absolute top-0 right-0 bottom-0 z-40 w-full md:w-80 transition-all duration-200 ${showChat ? "translate-x-0 opacity-100 pointer-events-auto" : "translate-x-full opacity-0 pointer-events-none"}`}>
+          <Chat
+            meetingId={meetingId}
+            email={email}
+            messages={chatMessages}
+            onSendMessage={handleSendChatMessage}
+            onClose={() => setShowChat(false)}
+          />
+        </div>
 
         {/* SIDE DRAWER: PARTICIPANTS */}
         {showParticipants && (
@@ -916,6 +1052,17 @@ function Meeting() {
           >
             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+            </svg>
+          </button>
+
+          {/* Floating Screen (Picture-in-Picture) */}
+          <button
+            onClick={togglePictureInPicture}
+            className="w-12 h-12 rounded-full bg-[#3c4043] hover:bg-slate-600 text-slate-100 flex items-center justify-center transition-all shadow-md"
+            title="Floating Screen (Picture-in-Picture when switching tabs)"
+          >
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
             </svg>
           </button>
         </div>
