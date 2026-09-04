@@ -195,19 +195,30 @@ function Meeting() {
       try {
         const pc = createPeerConnection(fromSocketId);
         syncLocalTracksToPeers();
-        await pc.setRemoteDescription(new RTCSessionDescription(offer));
 
-        const pending = pendingCandidatesRef.current.get(fromSocketId) || [];
-        for (const cand of pending) {
-          try { await pc.addIceCandidate(new RTCIceCandidate(cand)); } catch (e) {}
+        if (pc.signalingState === "have-local-offer") {
+          try {
+            await pc.setLocalDescription({ type: "rollback" });
+          } catch (rbErr) {
+            console.warn("Offer collision rollback warning:", rbErr);
+          }
         }
-        pendingCandidatesRef.current.delete(fromSocketId);
 
-        const answer = await pc.createAnswer();
-        await pc.setLocalDescription(answer);
-        socket.emit("answer", { targetSocketId: fromSocketId, answer });
+        if (pc.signalingState === "stable" || pc.signalingState === "have-local-offer") {
+          await pc.setRemoteDescription(new RTCSessionDescription(offer));
+
+          const pending = pendingCandidatesRef.current.get(fromSocketId) || [];
+          for (const cand of pending) {
+            try { await pc.addIceCandidate(new RTCIceCandidate(cand)); } catch (e) {}
+          }
+          pendingCandidatesRef.current.delete(fromSocketId);
+
+          const answer = await pc.createAnswer();
+          await pc.setLocalDescription(answer);
+          socket.emit("answer", { targetSocketId: fromSocketId, answer });
+        }
       } catch (err) {
-        console.error("Answer error:", err);
+        console.error("Offer error:", err);
       }
     };
 
@@ -215,13 +226,17 @@ function Meeting() {
       const pc = peerConnectionsRef.current.get(fromSocketId);
       if (pc) {
         try {
-          await pc.setRemoteDescription(new RTCSessionDescription(answer));
+          if (pc.signalingState === "have-local-offer") {
+            await pc.setRemoteDescription(new RTCSessionDescription(answer));
 
-          const pending = pendingCandidatesRef.current.get(fromSocketId) || [];
-          for (const cand of pending) {
-            try { await pc.addIceCandidate(new RTCIceCandidate(cand)); } catch (e) {}
+            const pending = pendingCandidatesRef.current.get(fromSocketId) || [];
+            for (const cand of pending) {
+              try { await pc.addIceCandidate(new RTCIceCandidate(cand)); } catch (e) {}
+            }
+            pendingCandidatesRef.current.delete(fromSocketId);
+          } else {
+            console.warn(`Skipping answer for ${fromSocketId} because signalingState is ${pc.signalingState}`);
           }
-          pendingCandidatesRef.current.delete(fromSocketId);
         } catch (err) {
           console.error("Answer set error:", err);
         }
@@ -558,10 +573,38 @@ function Meeting() {
     try {
       if (document.pictureInPictureElement) {
         await document.exitPictureInPicture();
-      } else if (localVideoRef.current && document.pictureInPictureEnabled) {
-        await localVideoRef.current.requestPictureInPicture();
-      } else {
+        return;
+      }
+
+      if (!document.pictureInPictureEnabled) {
         alert("Picture-in-Picture is not supported in this browser.");
+        return;
+      }
+
+      const videoEl = localVideoRef.current;
+      if (!videoEl || !videoEl.srcObject || isCameraOff) {
+        alert("Please turn on your camera to use Picture-in-Picture.");
+        return;
+      }
+
+      if (videoEl.readyState < 1) {
+        await new Promise((resolve) => {
+          const onMetadata = () => {
+            videoEl.removeEventListener("loadedmetadata", onMetadata);
+            resolve();
+          };
+          videoEl.addEventListener("loadedmetadata", onMetadata);
+          setTimeout(() => {
+            videoEl.removeEventListener("loadedmetadata", onMetadata);
+            resolve();
+          }, 1000);
+        });
+      }
+
+      if (videoEl.readyState >= 1) {
+        await videoEl.requestPictureInPicture();
+      } else {
+        console.warn("Video metadata not ready yet for Picture-in-Picture.");
       }
     } catch (err) {
       console.error("Picture-in-Picture error:", err);
