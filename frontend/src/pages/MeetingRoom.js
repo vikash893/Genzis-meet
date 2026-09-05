@@ -169,26 +169,31 @@ function MeetingRoom() {
     socket.emit("join-meeting", { meetingId, passcode });
   };
 
-  const joinRoom = async () => {
-    setJoining(true);
-    setError("");
+  const prepareMediaInBackground = async () => {
+    if (!joinOptions.camera && !joinOptions.microphone) return;
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setError("Camera and microphone are not available in this browser. You can enable them later on a supported device.");
+      return;
+    }
+
     try {
-      if (!navigator.mediaDevices?.getUserMedia && (joinOptions.camera || joinOptions.microphone)) throw new Error("Camera and microphone are not available in this browser.");
       const stream = await acquireSelectedMedia();
       if (stream) await addLocalTracks(stream);
-      joinedRef.current = true;
-      connectSocket();
-      if (socket.connected) emitJoin();
-      setPreJoin(false);
-    } catch (joinError) {
-      setError(joinError.message || "Media permission was denied. You can join with devices off.");
-      joinedRef.current = true;
-      connectSocket();
-      if (socket.connected) emitJoin();
-      setPreJoin(false);
-    } finally {
-      setJoining(false);
+    } catch (mediaError) {
+      console.warn("Media setup skipped:", mediaError.message);
+      setError("Meeting joined. Camera and microphone are off until permission is granted.");
     }
+  };
+
+  const joinRoom = () => {
+    setJoining(true);
+    setError("");
+    joinedRef.current = true;
+    connectSocket();
+    if (socket.connected) emitJoin();
+    setPreJoin(false);
+    setJoining(false);
+    void prepareMediaInBackground();
   };
 
   useEffect(() => {
