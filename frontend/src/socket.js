@@ -17,9 +17,8 @@ const socket = io(API_BASE_URL, {
 
 export const connectSocket = () => {
   const token = localStorage.getItem("token");
-  if (token) {
-    socket.auth = { token };
-  }
+  // Always sync auth so reconnections use the latest token
+  socket.auth = { token: token || "" };
   if (!socket.connected) {
     socket.connect();
   }

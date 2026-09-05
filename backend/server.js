@@ -247,7 +247,7 @@ io.on(
                     const isHost = meetingRecord.hostemail.toLowerCase() === email.toLowerCase();
                     const isInvited = isHost || meetingRecord.accessMode !== "selected" || (meetingRecord.allowedEmails && meetingRecord.allowedEmails.includes(email.toLowerCase()));
                     
-                    if (!isHost && normalizedPasscode && meetingRecord.passcode !== normalizedPasscode) {
+                    if (!isHost && meetingRecord.passcode !== normalizedPasscode) {
                         socket.emit("meeting-access-denied", { message: "Invalid meeting passcode" });
                         return;
                     }
