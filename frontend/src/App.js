@@ -10,7 +10,7 @@ import Login from "./pages/login";
 import Dashboard from "./pages/Dashboard";
 import AdminDashboard from "./pages/AdminDashboard";
 import JoinMeeting from "./pages/JoinMeeting";
-import Meeting from "./pages/Meeting";
+import MeetingRoom from "./pages/MeetingRoom";
 import Meetings from "./pages/Meetings";
 import MeetingHistory from "./pages/MeetingHistory";
 import Recordings from "./pages/Recordings";
@@ -24,7 +24,7 @@ function ProtectedMeeting() {
     return <Navigate to="/" replace state={{ requireLogin: true }} />;
   }
 
-  return <Meeting />;
+  return <MeetingRoom />;
 }
 
 function App() {
