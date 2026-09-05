@@ -11,6 +11,11 @@ import Dashboard from "./pages/Dashboard";
 import AdminDashboard from "./pages/AdminDashboard";
 import JoinMeeting from "./pages/JoinMeeting";
 import Meeting from "./pages/Meeting";
+import Meetings from "./pages/Meetings";
+import MeetingHistory from "./pages/MeetingHistory";
+import Recordings from "./pages/Recordings";
+import Announcements from "./pages/Announcements";
+import Settings from "./pages/Settings";
 
 function ProtectedMeeting() {
   const token = localStorage.getItem("token");
@@ -37,6 +42,11 @@ function App() {
 
         {/* User Dashboard */}
         <Route path="/dashboard" element={<Dashboard />} />
+        <Route path="/dashboard/meetings" element={<Meetings />} />
+        <Route path="/dashboard/history" element={<MeetingHistory />} />
+        <Route path="/dashboard/recordings" element={<Recordings />} />
+        <Route path="/dashboard/announcements" element={<Announcements />} />
+        <Route path="/dashboard/settings" element={<Settings />} />
 
         {/* Hidden Admin Routes */}
         <Route path="/genzies-admin" element={<Login defaultTab="admin" />} />

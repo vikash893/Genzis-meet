@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import Navbar from "../components/Navbar";
+import Sidebar from "../components/Sidebar";
 import { ENDPOINTS, normalizeMeetingId, normalizePasscode } from "../api";
 
 function Dashboard() {
@@ -282,9 +282,9 @@ function Dashboard() {
     <div className={`min-h-screen flex flex-col font-sans transition-colors duration-300 ${
       isLight ? "bg-slate-50 text-slate-900" : "bg-[#1a1a2e] text-[#e8eaed]"
     }`}>
-      <Navbar onThemeChange={handleThemeChange} />
+      <Sidebar onThemeChange={handleThemeChange} />
 
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-6 sm:py-8">
+      <main className="flex-1 w-full px-4 pt-24 pb-6 sm:px-6 sm:pb-8 lg:ml-72 lg:px-10 lg:pt-8">
         {/* HERO WELCOME BANNER */}
         <div className={`mb-8 p-6 sm:p-8 rounded-3xl border shadow-xl transition-all ${
           isLight

@@ -1001,27 +1001,22 @@ const startServer =
 
         try {
 
+            // Start HTTP and Socket.IO before database initialization so a
+            // transient MongoDB outage cannot make the service unavailable.
+            httpServer.listen(
+                port,
+                () => {
+                    console.log(
+                        `Server running on port ${port}`
+                    );
+                }
+            );
+
             // ------------------------------------------
             // Database
             // ------------------------------------------
 
             await connectDb();
-
-
-            // ------------------------------------------
-            // Start HTTP + Socket.IO server
-            // ------------------------------------------
-
-            httpServer.listen(
-                port,
-                () => {
-
-                    console.log(
-                        `Server running on port ${port}`
-                    );
-
-                }
-            );
 
 
         } catch (error) {

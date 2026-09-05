@@ -15,7 +15,7 @@ function RemoteVideo({
     if (videoRef.current && stream) {
       videoRef.current.srcObject = stream;
       videoRef.current.play().catch((e) =>
-        console.warn("Autoplay warning:", e)
+        e.name !== "AbortError" && console.warn("Autoplay warning:", e)
       );
     }
   }, [stream]);

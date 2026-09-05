@@ -9,7 +9,10 @@ const socket = io(API_BASE_URL, {
   reconnectionDelay: 1000,
   reconnectionDelayMax: 5000,
   timeout: 20000,
-  transports: ["websocket", "polling"]
+  // Let Render establish the Socket.IO session over HTTP first, then upgrade
+  // to WebSocket when the proxy and browser support it.
+  transports: ["polling", "websocket"],
+  upgrade: true
 });
 
 export const connectSocket = () => {

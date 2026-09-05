@@ -86,11 +86,18 @@ function Navbar({ onThemeChange }) {
         <a href="/#features" className={isLight ? "hover:text-slate-900" : "hover:text-white"}>Features</a>
         <a href="/#how-it-works" className={isLight ? "hover:text-slate-900" : "hover:text-white"}>How it works</a>
         <a href="/#security" className={isLight ? "hover:text-slate-900" : "hover:text-white"}>Security</a>
-        {token && (
-          <Link to="/dashboard" className={`transition-colors ${isActive("/dashboard") ? (isLight ? "text-[#533483] font-semibold" : "text-white font-semibold") : (isLight ? "hover:text-slate-900" : "hover:text-white")}`}>
-            Dashboard
+        {token && [
+          ["/dashboard", "Overview"],
+          ["/dashboard/meetings", "Meetings"],
+          ["/dashboard/history", "History"],
+          ["/dashboard/recordings", "Recordings"],
+          ["/dashboard/announcements", "Updates"],
+          ["/dashboard/settings", "Settings"]
+        ].map(([path, label]) => (
+          <Link key={path} to={path} className={`transition-colors ${isActive(path) ? (isLight ? "text-[#533483] font-semibold" : "text-white font-semibold") : (isLight ? "hover:text-slate-900" : "hover:text-white")}`}>
+            {label}
           </Link>
-        )}
+        ))}
       </div>
 
       {/* Right Actions & Theme Toggle */}
@@ -200,7 +207,16 @@ function Navbar({ onThemeChange }) {
           <a href="/#features" onClick={() => setMobileMenuOpen(false)} className="py-2 text-sm font-semibold">Features</a>
           <a href="/#how-it-works" onClick={() => setMobileMenuOpen(false)} className="py-2 text-sm font-semibold">How it works</a>
           <a href="/#security" onClick={() => setMobileMenuOpen(false)} className="py-2 text-sm font-semibold">Security</a>
-          {token && <Link to="/dashboard" onClick={() => setMobileMenuOpen(false)} className="py-2 text-sm font-semibold">Dashboard</Link>}
+          {token && (
+            <>
+              <Link to="/dashboard" onClick={() => setMobileMenuOpen(false)} className="py-2 text-sm font-semibold">Overview</Link>
+              <Link to="/dashboard/meetings" onClick={() => setMobileMenuOpen(false)} className="py-2 text-sm font-semibold">Meetings</Link>
+              <Link to="/dashboard/history" onClick={() => setMobileMenuOpen(false)} className="py-2 text-sm font-semibold">History</Link>
+              <Link to="/dashboard/recordings" onClick={() => setMobileMenuOpen(false)} className="py-2 text-sm font-semibold">Recordings</Link>
+              <Link to="/dashboard/announcements" onClick={() => setMobileMenuOpen(false)} className="py-2 text-sm font-semibold">Updates</Link>
+              <Link to="/dashboard/settings" onClick={() => setMobileMenuOpen(false)} className="py-2 text-sm font-semibold">Settings</Link>
+            </>
+          )}
         </div>
       )}
 
