@@ -456,7 +456,7 @@ io.on(
                 // ------------------------------------------
 
                 if (!alreadyJoined) {
-                    socket.to(
+                    io.to(
                         normalizedMeetingId
                     ).emit(
                         "user-joined",
@@ -1037,3 +1037,4 @@ const startServer =
 
 
 startServer();
+
