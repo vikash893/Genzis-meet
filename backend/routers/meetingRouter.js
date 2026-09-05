@@ -81,16 +81,17 @@ meetingRouter.post(
 
         try {
 
-            const { meetingId, passcode } = req.body;
+            const meetingKey = String(req.body?.meetingId || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+            const passkey = String(req.body?.passcode || "").trim();
 
-            if (!meetingId || !passcode) {
+            if (!meetingKey || !passkey) {
                 return res.status(400).json({
                     message: "Meeting ID and passcode are required"
                 });
             }
 
             const meeting = await Meeting.findOne({
-                meetingId: meetingId
+                meetingId: meetingKey
             });
 
             if (!meeting) {
@@ -104,7 +105,7 @@ meetingRouter.post(
                 });
             }
 
-            if (meeting.passcode !== passcode) {
+            if (meeting.passcode !== passkey) {
                 return res.status(401).json({
                     message: "Invalid passcode"
                 });

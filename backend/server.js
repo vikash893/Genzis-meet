@@ -136,7 +136,7 @@ app.use("/health", router);
 // ==========================================
 
 const httpServer =
-    http.createServer(app);
+    http.createServer(app)
 
 
 // ==========================================
@@ -224,28 +224,30 @@ io.on(
             }) => {
 
                 const email = socket.user.email;
+                const normalizedMeetingId = String(meetingId || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+                const normalizedPasscode = String(passcode || "").trim();
 
                 console.log(
-                    `${email} wants to join ${meetingId}`
+                    `${email} wants to join ${normalizedMeetingId}`
                 );
 
                 // Verify meeting is not ended in database
                 let meetingRecord = null;
                 try {
-                    meetingRecord = await Meeting.findOne({ meetingId: meetingId });
+                    meetingRecord = await Meeting.findOne({ meetingId: normalizedMeetingId });
                     if (!meetingRecord) {
                         socket.emit("meeting-access-denied", { message: "Meeting not found" });
                         return;
                     }
                     if (meetingRecord && meetingRecord.status === "ended") {
-                        console.log(`Rejecting join for ended meeting ${meetingId}`);
+                        console.log(`Rejecting join for ended meeting ${normalizedMeetingId}`);
                         socket.emit("meeting-ended-by-host");
                         return;
                     }
                     const isHost = meetingRecord.hostemail.toLowerCase() === email.toLowerCase();
                     const isInvited = isHost || meetingRecord.accessMode !== "selected" || (meetingRecord.allowedEmails && meetingRecord.allowedEmails.includes(email.toLowerCase()));
                     
-                    if (!isHost && passcode && meetingRecord.passcode !== passcode) {
+                    if (!isHost && normalizedPasscode && meetingRecord.passcode !== normalizedPasscode) {
                         socket.emit("meeting-access-denied", { message: "Invalid meeting passcode" });
                         return;
                     }
@@ -269,7 +271,7 @@ io.on(
                 }
 
                 socket.join(
-                    meetingId
+                    normalizedMeetingId
                 );
 
 
@@ -280,12 +282,12 @@ io.on(
 
                 if (
                     !meetingUsers.has(
-                        meetingId
+                        normalizedMeetingId
                     )
                 ) {
 
                     meetingUsers.set(
-                        meetingId,
+                        normalizedMeetingId,
                         []
                     );
 
@@ -294,21 +296,21 @@ io.on(
                 // Identify Host: If joining user's email matches meeting's database hostemail OR if no host is set yet
                 const isDatabaseHost = meetingRecord && meetingRecord.hostemail && meetingRecord.hostemail.toLowerCase() === (email || "").toLowerCase();
 
-                if (isDatabaseHost || !meetingHosts.has(meetingId)) {
+                if (isDatabaseHost || !meetingHosts.has(normalizedMeetingId)) {
                     meetingHosts.set(
-                        meetingId,
+                        normalizedMeetingId,
                         socket.id
                     );
 
                     console.log(
-                        `Host of ${meetingId} set to: ${email} (${socket.id})`
+                        `Host of ${normalizedMeetingId} set to: ${email} (${socket.id})`
                     );
                 }
 
 
                 const users =
                     meetingUsers.get(
-                        meetingId
+                        normalizedMeetingId
                     );
 
 
@@ -337,7 +339,7 @@ io.on(
                     previousSocketId = existingUserByEmail.socketId;
                     existingUserByEmail.socketId = socket.id;
                     if (previousSocketId && previousSocketId !== socket.id) {
-                        socket.to(meetingId).emit("user-left", { socketId: previousSocketId, email });
+                        socket.to(normalizedMeetingId).emit("user-left", { socketId: previousSocketId, email });
                         console.log(`Replaced old socket ${previousSocketId} with ${socket.id} for ${email}`);
                     }
                 } else if (!alreadyJoined) {
@@ -349,7 +351,7 @@ io.on(
                     try {
                         const joinedAt = new Date();
                         await MeetingAttendance.create({
-                            meetingId,
+                            meetingId: normalizedMeetingId,
                             email,
                             joinedAt
                         });
@@ -357,7 +359,7 @@ io.on(
                             await User.findByIdAndUpdate(socket.user.id, {
                                 $push: {
                                     meetingHistory: {
-                                        meetingId,
+                                        meetingId: normalizedMeetingId,
                                         title: meetingRecord.title || "Untitled meeting",
                                         joinedAt
                                     }
@@ -370,11 +372,11 @@ io.on(
                 }
 
                 // Cancel pending disconnect timer if user reconnected
-                const timerKey = `${meetingId}:${email}`;
+                const timerKey = `${normalizedMeetingId}:${email}`;
                 if (disconnectTimers.has(timerKey)) {
                     clearTimeout(disconnectTimers.get(timerKey));
                     disconnectTimers.delete(timerKey);
-                    console.log(`Cancelled disconnect timer for ${email} in ${meetingId}`);
+                    console.log(`Cancelled disconnect timer for ${email} in ${normalizedMeetingId}`);
                 }
 
                 console.log(
@@ -394,7 +396,7 @@ io.on(
                 });
 
                 try {
-                    const savedMessages = await ChatMessage.find({ meetingId })
+                    const savedMessages = await ChatMessage.find({ meetingId: normalizedMeetingId })
                         .sort({ sentAt: 1 })
                         .lean();
 
@@ -425,7 +427,7 @@ io.on(
                 }
 
                 io.to(
-                    meetingId
+                    normalizedMeetingId
                 ).emit(
                     "participants",
                     users
@@ -437,10 +439,10 @@ io.on(
                 // ------------------------------------------
 
                 const hostSocketId =
-                    meetingHosts.get(meetingId);
+                    meetingHosts.get(normalizedMeetingId);
 
                 io.to(
-                    meetingId
+                    normalizedMeetingId
                 ).emit(
                     "host-info",
                     {
@@ -455,7 +457,7 @@ io.on(
 
                 if (!alreadyJoined) {
                     socket.to(
-                        meetingId
+                        normalizedMeetingId
                     ).emit(
                         "user-joined",
                         {
@@ -604,8 +606,9 @@ io.on(
         socket.on(
             "raise-hand",
             ({ meetingId, email, isHandRaised }) => {
-                console.log(`${email} hand raised state: ${isHandRaised} in meeting ${meetingId}`);
-                io.to(meetingId).emit("user-hand-raised", {
+                const normalizedMeetingId = String(meetingId || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+                console.log(`${email} hand raised state: ${isHandRaised} in meeting ${normalizedMeetingId}`);
+                io.to(normalizedMeetingId).emit("user-hand-raised", {
                     socketId: socket.id,
                     email,
                     isHandRaised
@@ -621,8 +624,9 @@ io.on(
         socket.on(
             "send-reaction",
             ({ meetingId, email, emoji }) => {
-                console.log(`Reaction ${emoji} from ${email} in ${meetingId}`);
-                io.to(meetingId).emit("receive-reaction", {
+                const normalizedMeetingId = String(meetingId || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+                console.log(`Reaction ${emoji} from ${email} in ${normalizedMeetingId}`);
+                io.to(normalizedMeetingId).emit("receive-reaction", {
                     socketId: socket.id,
                     email,
                     emoji,
@@ -639,7 +643,8 @@ io.on(
         socket.on(
             "user-media-state",
             ({ meetingId, email, isMuted, isCameraOff }) => {
-                socket.to(meetingId).emit("user-media-state-changed", {
+                const normalizedMeetingId = String(meetingId || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+                socket.to(normalizedMeetingId).emit("user-media-state-changed", {
                     socketId: socket.id,
                     email,
                     isMuted,
@@ -656,8 +661,9 @@ io.on(
         socket.on(
             "toggle-privacy-mode",
             ({ meetingId, isPrivacyMode }) => {
-                console.log(`Privacy mode set to ${isPrivacyMode} in ${meetingId}`);
-                io.to(meetingId).emit("privacy-mode-changed", {
+                const normalizedMeetingId = String(meetingId || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+                console.log(`Privacy mode set to ${isPrivacyMode} in ${normalizedMeetingId}`);
+                io.to(normalizedMeetingId).emit("privacy-mode-changed", {
                     isPrivacyMode
                 });
             }
@@ -671,52 +677,53 @@ io.on(
         socket.on(
             "end-meeting",
             async ({ meetingId }) => {
+                const normalizedMeetingId = String(meetingId || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
 
                 // Only the HOST can end the meeting
                 const hostSocketId =
-                    meetingHosts.get(meetingId);
+                    meetingHosts.get(normalizedMeetingId);
 
                 if (
                     hostSocketId &&
                     hostSocketId !== socket.id
                 ) {
                     console.log(
-                        `Non-host ${socket.id} tried to end ${meetingId} — blocked`
+                        `Non-host ${socket.id} tried to end ${normalizedMeetingId} — blocked`
                     );
                     return;
                 }
 
                 console.log(
-                    `HOST ended meeting ${meetingId}`
+                    `HOST ended meeting ${normalizedMeetingId}`
                 );
 
                 // Update database status to "ended" so no user can join again
                 try {
                     await Meeting.findOneAndUpdate(
-                        { meetingId: meetingId },
+                        { meetingId: normalizedMeetingId },
                         { status: "ended", endedAt: new Date() }
                     );
-                    console.log(`Meeting ${meetingId} marked as ended in DB.`);
+                    console.log(`Meeting ${normalizedMeetingId} marked as ended in DB.`);
                 } catch (err) {
                     console.error("DB update error on end-meeting:", err);
                 }
 
                 // Notify ALL clients in the room
-                io.to(meetingId).emit(
+                io.to(normalizedMeetingId).emit(
                     "meeting-ended-by-host"
                 );
 
                 // Force-disconnect every socket in room
                 const roomSockets =
-                    await io.in(meetingId).fetchSockets();
+                    await io.in(normalizedMeetingId).fetchSockets();
 
                 for (const s of roomSockets) {
-                    s.leave(meetingId);
+                    s.leave(normalizedMeetingId);
                 }
 
                 // Clean up server state
-                meetingUsers.delete(meetingId);
-                meetingHosts.delete(meetingId);
+                meetingUsers.delete(normalizedMeetingId);
+                meetingHosts.delete(normalizedMeetingId);
             }
         );
 
@@ -726,8 +733,9 @@ io.on(
         // ==========================================
 
         socket.on("send-subtitle", async ({ meetingId, text, timestamp }) => {
+            const normalizedMeetingId = String(meetingId || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
             const cleanText = typeof text === "string" ? text.trim() : "";
-            const usersInMeeting = meetingUsers.get(meetingId);
+            const usersInMeeting = meetingUsers.get(normalizedMeetingId);
             const sender = usersInMeeting && usersInMeeting.find((user) => user.socketId === socket.id);
             if (!sender || !cleanText || cleanText.length > 500) return;
 
@@ -736,17 +744,17 @@ io.on(
 
             try {
                 await Subtitle.create({
-                    meetingId,
+                    meetingId: normalizedMeetingId,
                     userId: socket.user.id,
                     email: sender.email,
                     text: cleanText,
                     spokenAt
                 });
                 await User.findByIdAndUpdate(socket.user.id, {
-                    $push: { subtitleHistory: { meetingId, text: cleanText, spokenAt } }
+                    $push: { subtitleHistory: { meetingId: normalizedMeetingId, text: cleanText, spokenAt } }
                 });
-                io.to(meetingId).emit("subtitle", {
-                    meetingId,
+                io.to(normalizedMeetingId).emit("subtitle", {
+                    meetingId: normalizedMeetingId,
                     userId: socket.user.id,
                     email: sender.email,
                     text: cleanText,
@@ -769,6 +777,7 @@ io.on(
                 id,
                 timestamp
             }) => {
+                const normalizedMeetingId = String(meetingId || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
 
                 console.log(
                     "================================"
@@ -814,7 +823,7 @@ io.on(
                 // ------------------------------------------
 
                 if (
-                    !meetingId ||
+                    !normalizedMeetingId ||
                     !message ||
                     !message.trim()
                 ) {
@@ -834,12 +843,12 @@ io.on(
 
                 let users =
                     meetingUsers.get(
-                        meetingId
+                        normalizedMeetingId
                     );
 
                 if (!users) {
                     users = [];
-                    meetingUsers.set(meetingId, users);
+                    meetingUsers.set(normalizedMeetingId, users);
                 }
 
                 // ------------------------------------------
@@ -878,7 +887,7 @@ io.on(
                 try {
                     const encrypted = encryptChatMessage(cleanMessage);
                     await ChatMessage.create({
-                        meetingId,
+                        meetingId: normalizedMeetingId,
                         messageId,
                         senderEmail,
                         ...encrypted,
@@ -890,14 +899,14 @@ io.on(
 
                 const chatMessage = {
                     id: messageId,
-                    meetingId: meetingId,
+                    meetingId: normalizedMeetingId,
                     email: senderEmail,
                     message: cleanMessage,
                     timestamp: sentAt.toISOString()
                 };
 
                 // Broadcast message to EVERYONE in the meeting room
-                io.to(meetingId).emit("receive-message", chatMessage);
+                io.to(normalizedMeetingId).emit("receive-message", chatMessage);
 
                 console.log(
                     "Message broadcast completed"
