@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import Navbar from "../components/Navbar";
-import { ENDPOINTS } from "../api";
+import { ENDPOINTS, normalizeMeetingId, normalizePasscode } from "../api";
 
 function Dashboard() {
   const navigate = useNavigate();
@@ -232,6 +232,9 @@ function Dashboard() {
     setJoining(true);
 
     try {
+      const safeMeetingId = normalizeMeetingId(joinId);
+      const safePasscode = normalizePasscode(joinPasscode);
+
       const res = await fetch(ENDPOINTS.MEETING_JOIN, {
         method: "POST",
         headers: {
@@ -239,8 +242,8 @@ function Dashboard() {
           Authorization: `Bearer ${token}`
         },
         body: JSON.stringify({
-          meetingId: joinId.toUpperCase().trim(),
-          passcode: joinPasscode.trim()
+          meetingId: safeMeetingId,
+          passcode: safePasscode
         })
       });
 
@@ -251,8 +254,8 @@ function Dashboard() {
         return;
       }
 
-      navigate(`/meeting/live/${data.meetingId}?passcode=${encodeURIComponent(joinPasscode.trim())}`, {
-        state: { email: data.useremail, passcode: joinPasscode.trim() }
+      navigate(`/meeting/live/${data.meetingId}?passcode=${encodeURIComponent(safePasscode)}`, {
+        state: { email: data.useremail, passcode: safePasscode }
       });
 
     } catch (err) {
@@ -895,7 +898,7 @@ function Dashboard() {
                   required
                   placeholder="e.g. AB12CD"
                   value={joinId}
-                  onChange={(e) => setJoinId(e.target.value)}
+                  onChange={(e) => setJoinId(normalizeMeetingId(e.target.value))}
                   className={`w-full px-4 py-3 rounded-xl border uppercase font-mono tracking-wider text-sm focus:outline-none ${
                     isLight ? "bg-slate-50 border-slate-300 text-slate-900" : "bg-[#1a1a2e] border-[#0f3460] text-white"
                   }`}

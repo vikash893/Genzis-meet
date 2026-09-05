@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 
-import { ENDPOINTS } from "../api";
+import { ENDPOINTS, normalizeMeetingId, normalizePasscode } from "../api";
 
 function JoinMeeting() {
 
@@ -26,6 +26,8 @@ function JoinMeeting() {
 
 
         try {
+            const safeMeetingId = normalizeMeetingId(meetingId);
+            const safePasscode = normalizePasscode(passcode);
 
             // ==========================================
             // GET JWT TOKEN
@@ -60,8 +62,8 @@ function JoinMeeting() {
                     },
 
                     body: JSON.stringify({
-                        meetingId,
-                        passcode
+                        meetingId: safeMeetingId,
+                        passcode: safePasscode
                     })
                 }
             );
@@ -111,11 +113,11 @@ function JoinMeeting() {
             // ==========================================
 
             navigate(
-                `/meeting/live/${data.meetingId}?passcode=${encodeURIComponent(passcode.trim())}`,
+                `/meeting/live/${data.meetingId}?passcode=${encodeURIComponent(safePasscode)}`,
                 {
                     state: {
                         email: data.useremail,
-                        passcode: passcode.trim()
+                        passcode: safePasscode
                     }
                 }
             );
@@ -166,7 +168,7 @@ function JoinMeeting() {
                     placeholder="Meeting ID"
                     value={meetingId}
                     onChange={(e) =>
-                        setMeetingId(e.target.value)
+                        setMeetingId(normalizeMeetingId(e.target.value))
                     }
                     required
                 />

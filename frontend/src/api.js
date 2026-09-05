@@ -1,6 +1,13 @@
 // CRA embeds this value at build time, so keep the deployed backend as a safe production fallback.
-const configuredApiUrl = process.env.REACT_APP_API_URL || "https://genzis-meet.onrender.com";
+const defaultApiUrl = typeof window !== "undefined" && (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1")
+  ? "http://localhost:8000"
+  : "https://genzis-meet.onrender.com";
+
+const configuredApiUrl = process.env.REACT_APP_API_URL || defaultApiUrl;
 export const API_BASE_URL = configuredApiUrl.replace(/\/+$/, "");
+
+export const normalizeMeetingId = (value = "") => String(value ?? "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+export const normalizePasscode = (value = "") => String(value ?? "").trim();
 
 export const ENDPOINTS = {
   USER_LOGIN: `${API_BASE_URL}/api/user/login`,

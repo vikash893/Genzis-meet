@@ -103,6 +103,7 @@ function Meeting() {
   const [remoteStates, setRemoteStates] = useState({});
 
   const hasJoinedMeetingRef = useRef(false);
+  const meetingBootstrappedRef = useRef(false);
   const makingOfferRef = useRef(new Map());
 
   const addNetworkLog = (msg) => {
@@ -316,6 +317,8 @@ function Meeting() {
   // Socket & Media Effect
   useEffect(() => {
     const handleUserJoined = async (user) => {
+      if (!user || user.socketId === socket.id) return;
+
       try {
         // Instant cleanup: If we already have a stream for this email under an old socketId, tear it down immediately
         setRemoteStreams((prev) => {
@@ -416,6 +419,23 @@ function Meeting() {
     const handleParticipants = (users) => {
       setParticipants(users);
       participantsRef.current = users;
+
+      users.forEach((user) => {
+        if (!user || user.socketId === socket.id) return;
+        const pc = peerConnectionsRef.current.get(user.socketId);
+        if (!pc && user.socketId) {
+          const newPc = createPeerConnection(user.socketId);
+          syncLocalTracksToPeers();
+          if (newPc && newPc.signalingState === "stable") {
+            makingOfferRef.current.set(user.socketId, true);
+            newPc.createOffer()
+              .then((offer) => newPc.setLocalDescription(offer))
+              .then(() => socket.emit("offer", { targetSocketId: user.socketId, offer: newPc.localDescription }))
+              .catch((err) => console.error("Initial participant offer error:", err))
+              .finally(() => makingOfferRef.current.set(user.socketId, false));
+          }
+        }
+      });
 
       setRemoteStreams((prev) => {
         let hasChanges = false;
@@ -525,7 +545,8 @@ function Meeting() {
       addNetworkLog("Socket connected to signaling server.");
       if (!hasJoinedMeetingRef.current) return;
       const activePasscode = passcodeRef.current || sessionStorage.getItem(`meeting_passcode_${meetingId}`) || "";
-      socket.emit("join-meeting", { meetingId, passcode: activePasscode });
+      const normalizedMeetingId = String(meetingId || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+      socket.emit("join-meeting", { meetingId: normalizedMeetingId, passcode: activePasscode });
     };
 
     const handleDisconnect = (reason) => {
@@ -560,6 +581,9 @@ function Meeting() {
     socket.on("receive-message", handleReceiveMessage);
 
     const startMeeting = async () => {
+      if (meetingBootstrappedRef.current) return;
+      meetingBootstrappedRef.current = true;
+
       connectSocket();
       let stream = null;
       try {
@@ -577,6 +601,7 @@ function Meeting() {
             stream = await navigator.mediaDevices.getUserMedia({ video: false, audio: true });
           } catch (err3) {
             console.error("Camera and mic unavailable:", err3);
+            alert("Camera and microphone access is required to join the meeting. Please allow them when prompted.");
           }
         }
       }
@@ -600,7 +625,8 @@ function Meeting() {
 
       hasJoinedMeetingRef.current = true;
       const activePasscode = passcodeRef.current || sessionStorage.getItem(`meeting_passcode_${meetingId}`) || "";
-      socket.emit("join-meeting", { meetingId, passcode: activePasscode });
+      const normalizedMeetingId = String(meetingId || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+      socket.emit("join-meeting", { meetingId: normalizedMeetingId, passcode: activePasscode });
       setIsConnecting(false);
     };
 
@@ -608,6 +634,7 @@ function Meeting() {
 
     return () => {
       hasJoinedMeetingRef.current = false;
+      meetingBootstrappedRef.current = false;
       socket.off("connect", handleConnect);
       socket.off("disconnect", handleDisconnect);
       socket.off("connect_error", handleConnectError);
