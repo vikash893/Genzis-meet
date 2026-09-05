@@ -138,20 +138,30 @@ function MeetingRoom() {
   const acquireSelectedMedia = async () => {
     if (!joinOptions.camera && !joinOptions.microphone) return null;
     const constraints = { video: joinOptions.camera, audio: joinOptions.microphone };
-    try {
-      return await navigator.mediaDevices.getUserMedia(constraints);
-    } catch (combinedError) {
-      let videoTracks = [];
-      let audioTracks = [];
-      if (joinOptions.camera) {
-        try { videoTracks = (await navigator.mediaDevices.getUserMedia({ video: true, audio: false })).getVideoTracks(); } catch {}
-      }
-      if (joinOptions.microphone) {
-        try { audioTracks = (await navigator.mediaDevices.getUserMedia({ video: false, audio: true })).getAudioTracks(); } catch {}
-      }
-      if (!videoTracks.length && !audioTracks.length) throw combinedError;
-      return new MediaStream([...videoTracks, ...audioTracks]);
-    }
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const timer = window.setTimeout(() => {
+        settled = true;
+        reject(new Error("Media permission was not completed. You can enable devices after joining."));
+      }, 5000);
+
+      navigator.mediaDevices.getUserMedia(constraints)
+        .then((stream) => {
+          if (settled) {
+            stream.getTracks().forEach((track) => track.stop());
+            return;
+          }
+          settled = true;
+          window.clearTimeout(timer);
+          resolve(stream);
+        })
+        .catch((mediaError) => {
+          if (settled) return;
+          settled = true;
+          window.clearTimeout(timer);
+          reject(mediaError);
+        });
+    });
   };
 
   const emitJoin = () => {
