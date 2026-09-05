@@ -59,7 +59,7 @@ function Meeting() {
   const [remoteStreams, setRemoteStreams] = useState({});
   const [participants, setParticipants] = useState([]);
   const [chatMessages, setChatMessages] = useState([]);
-  const [isMuted, setIsMuted] = useState(false);
+  const [isMuted, setIsMuted] = useState(true);
   const [isCameraOff, setIsCameraOff] = useState(true);
   const [isScreenSharing, setIsScreenSharing] = useState(false);
   const [isHandRaised, setIsHandRaised] = useState(false);
@@ -582,49 +582,6 @@ function Meeting() {
       meetingBootstrappedRef.current = true;
 
       connectSocket();
-      let stream = null;
-      const requestMedia = (constraints) => Promise.race([
-        navigator.mediaDevices.getUserMedia(constraints),
-        new Promise((_, reject) => {
-          window.setTimeout(() => reject(new Error("Media permission request timed out.")), 12000);
-        })
-      ]);
-      try {
-        if (!navigator.mediaDevices?.getUserMedia) {
-          throw new Error("Media devices are not available in this browser.");
-        }
-        stream = await requestMedia({ video: true, audio: true });
-      } catch (err1) {
-        console.warn("Could not get video and audio, trying video only:", err1);
-        try {
-          stream = await requestMedia({ video: true, audio: false });
-        } catch (err2) {
-          console.warn("Could not get video, trying audio only:", err2);
-          try {
-            stream = await requestMedia({ video: false, audio: true });
-          } catch (err3) {
-            console.error("Camera and mic unavailable:", err3);
-            setConnectionError("Camera and microphone are unavailable. You can still join with both turned off.");
-          }
-        }
-      }
-
-      if (stream) {
-        localStreamRef.current = stream;
-        const hasVideo = stream.getVideoTracks().length > 0;
-        const hasAudio = stream.getAudioTracks().length > 0;
-        setIsCameraOff(!hasVideo);
-        setIsMuted(!hasAudio);
-
-        if (localVideoRef.current) {
-          localVideoRef.current.srcObject = stream;
-          localVideoRef.current.play().catch(() => {});
-        }
-        syncLocalTracksToPeers();
-      } else {
-        setIsCameraOff(true);
-        setIsMuted(true);
-      }
 
       hasJoinedMeetingRef.current = true;
       const activePasscode = passcodeRef.current || sessionStorage.getItem(`meeting_passcode_${meetingId}`) || "";
@@ -724,6 +681,7 @@ function Meeting() {
           audioStream.getAudioTracks().forEach((track) => localStreamRef.current.addTrack(track));
         }
         setIsMuted(false);
+        setConnectionError("");
         syncLocalTracksToPeers();
         socket.emit("user-media-state", { meetingId, email, isMuted: false, isCameraOff });
       } catch (err) {
@@ -754,6 +712,7 @@ function Meeting() {
         localStreamRef.current = stream;
         setIsCameraOff(false);
         setIsMuted(true);
+        setConnectionError("");
         if (localVideoRef.current) {
           localVideoRef.current.srcObject = stream;
           localVideoRef.current.play().catch(() => {});
@@ -783,6 +742,7 @@ function Meeting() {
 
         localStreamRef.current.addTrack(newVideoTrack);
         setIsCameraOff(false);
+        setConnectionError("");
 
         if (localVideoRef.current) {
           localVideoRef.current.srcObject = localStreamRef.current;
@@ -799,7 +759,7 @@ function Meeting() {
         socket.emit("user-media-state", { meetingId, email, isMuted, isCameraOff: false });
       } catch (err) {
         console.error("Could not acquire video:", err);
-        alert("Camera permission is required. Please allow camera access in your browser settings.");
+        setConnectionError("Camera permission was denied or is unavailable.");
       }
       return;
     }
