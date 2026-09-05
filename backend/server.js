@@ -243,8 +243,9 @@ io.on(
                         return;
                     }
                     const isHost = meetingRecord.hostemail.toLowerCase() === email.toLowerCase();
-                    const isInvited = isHost || meetingRecord.accessMode !== "selected" || meetingRecord.allowedEmails.includes(email.toLowerCase());
-                    if (!isHost && meetingRecord.passcode !== passcode) {
+                    const isInvited = isHost || meetingRecord.accessMode !== "selected" || (meetingRecord.allowedEmails && meetingRecord.allowedEmails.includes(email.toLowerCase()));
+                    
+                    if (!isHost && passcode && meetingRecord.passcode !== passcode) {
                         socket.emit("meeting-access-denied", { message: "Invalid meeting passcode" });
                         return;
                     }
@@ -331,8 +332,14 @@ io.on(
                 // Add or update user
                 // ------------------------------------------
 
+                let previousSocketId = null;
                 if (existingUserByEmail) {
+                    previousSocketId = existingUserByEmail.socketId;
                     existingUserByEmail.socketId = socket.id;
+                    if (previousSocketId && previousSocketId !== socket.id) {
+                        socket.to(meetingId).emit("user-left", { socketId: previousSocketId, email });
+                        console.log(`Replaced old socket ${previousSocketId} with ${socket.id} for ${email}`);
+                    }
                 } else if (!alreadyJoined) {
                     users.push({
                         socketId: socket.id,

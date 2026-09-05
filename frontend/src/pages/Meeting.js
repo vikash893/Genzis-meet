@@ -317,6 +317,24 @@ function Meeting() {
   useEffect(() => {
     const handleUserJoined = async (user) => {
       try {
+        // Instant cleanup: If we already have a stream for this email under an old socketId, tear it down immediately
+        setRemoteStreams((prev) => {
+          let modified = false;
+          const copy = { ...prev };
+          Object.entries(copy).forEach(([sId, data]) => {
+            if (data.email === user.email && sId !== user.socketId) {
+              delete copy[sId];
+              modified = true;
+              const pc = peerConnectionsRef.current.get(sId);
+              if (pc) pc.close();
+              peerConnectionsRef.current.delete(sId);
+              pendingCandidatesRef.current.delete(sId);
+              makingOfferRef.current.delete(sId);
+            }
+          });
+          return modified ? copy : prev;
+        });
+
         const pc = createPeerConnection(user.socketId);
         syncLocalTracksToPeers();
         makingOfferRef.current.set(user.socketId, true);
