@@ -58,21 +58,34 @@ function Meeting() {
   const [participants, setParticipants] = useState([]);
   const [chatMessages, setChatMessages] = useState([]);
   const [isMuted, setIsMuted] = useState(false);
-  const [isCameraOff, setIsCameraOff] = useState(true); // FIX: Start true until media acquired
+  const [isCameraOff, setIsCameraOff] = useState(true);
   const [isScreenSharing, setIsScreenSharing] = useState(false);
   const [isHandRaised, setIsHandRaised] = useState(false);
 
   // Recording State
   const [isRecording, setIsRecording] = useState(false);
   const [recordingDuration, setRecordingDuration] = useState(0);
-  const [recordingBlobUrl, setRecordingBlobUrl] = useState(null); // FIX: For in-app playback
-  const [showRecordingPlayer, setShowRecordingPlayer] = useState(false); // FIX: Recording modal
+  const [recordingBlobUrl, setRecordingBlobUrl] = useState(null);
+  const [showRecordingPlayer, setShowRecordingPlayer] = useState(false);
 
   // Privacy Shield State
   const [isPrivacyMode, setIsPrivacyMode] = useState(false);
 
-  // FIX: Loading/Connecting State to prevent flicker
+  // Loading/Connecting State
   const [isConnecting, setIsConnecting] = useState(true);
+
+  // Network Monitoring States
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
+  const [socketStatus, setSocketStatus] = useState(socket.connected ? "connected" : "connecting");
+  const [networkQuality, setNetworkQuality] = useState("good"); // "excellent" | "good" | "weak" | "poor" | "offline"
+  const [networkStats, setNetworkStats] = useState({
+    ping: 0,
+    packetLoss: 0,
+    iceState: "connected",
+    candidateType: "STUN",
+    logs: []
+  });
+  const [showNetworkModal, setShowNetworkModal] = useState(false);
 
   // Drawers & Modals
   const [showChat, setShowChat] = useState(false);
@@ -90,8 +103,99 @@ function Meeting() {
   const [remoteStates, setRemoteStates] = useState({});
 
   const hasJoinedMeetingRef = useRef(false);
-  // FIX: For polite peer pattern - track if we are making an offer
   const makingOfferRef = useRef(new Map());
+
+  const addNetworkLog = (msg) => {
+    setNetworkStats((prev) => ({
+      ...prev,
+      logs: [`[${new Date().toLocaleTimeString()}] ${msg}`, ...prev.logs.slice(0, 19)]
+    }));
+  };
+
+  // Listen to browser network status (Online/Offline)
+  useEffect(() => {
+    const handleOnline = () => {
+      setIsOnline(true);
+      addNetworkLog("Internet connection restored.");
+    };
+    const handleOffline = () => {
+      setIsOnline(false);
+      setNetworkQuality("offline");
+      addNetworkLog("⚠️ Internet connection lost (Browser Offline).");
+    };
+
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+
+    return () => {
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
+    };
+  }, []);
+
+  // WebRTC Peer Connection Stats & Network Polling Loop
+  useEffect(() => {
+    const statsInterval = setInterval(async () => {
+      if (!navigator.onLine) {
+        setNetworkQuality("offline");
+        return;
+      }
+
+      let totalPing = 0;
+      let totalLoss = 0;
+      let count = 0;
+      let lastCandidateType = "STUN";
+      let overallIceState = "connected";
+
+      for (const [, pc] of peerConnectionsRef.current.entries()) {
+        overallIceState = pc.iceConnectionState || pc.connectionState;
+
+        try {
+          const stats = await pc.getStats();
+          for (const report of stats.values()) {
+            if (report.type === "candidate-pair" && report.state === "succeeded") {
+              if (report.currentRoundTripTime) {
+                totalPing += report.currentRoundTripTime * 1000;
+                count++;
+              }
+            }
+            if (report.type === "inbound-rtp" && report.kind === "video") {
+              if (report.packetsLost && report.packetsReceived) {
+                const lossRatio = (report.packetsLost / (report.packetsLost + report.packetsReceived)) * 100;
+                totalLoss += lossRatio;
+              }
+            }
+            if (report.type === "local-candidate") {
+              if (report.candidateType === "relay") lastCandidateType = "TURN";
+              else if (report.candidateType === "host") lastCandidateType = "Host Direct";
+            }
+          }
+        } catch (e) {
+          // Peer connection stats fetch warning
+        }
+      }
+
+      const avgPing = count > 0 ? Math.round(totalPing / count) : 45;
+      const avgLoss = count > 0 ? Math.round((totalLoss / count) * 10) / 10 : 0;
+
+      let quality = "excellent";
+      if (!navigator.onLine || socketStatus === "disconnected") quality = "offline";
+      else if (avgPing > 500 || avgLoss > 15 || overallIceState === "disconnected") quality = "poor";
+      else if (avgPing > 250 || avgLoss > 5) quality = "weak";
+      else if (avgPing > 120) quality = "good";
+
+      setNetworkQuality(quality);
+      setNetworkStats((prev) => ({
+        ...prev,
+        ping: avgPing,
+        packetLoss: avgLoss,
+        iceState: overallIceState,
+        candidateType: lastCandidateType
+      }));
+    }, 3000);
+
+    return () => clearInterval(statsInterval);
+  }, [socketStatus]);
 
   const syncLocalTracksToPeers = useCallback(() => {
     const activeStream = screenStreamRef.current || localStreamRef.current;
@@ -113,14 +217,12 @@ function Meeting() {
     });
   }, []);
 
-  // ICE Server Configuration with TURN fallback
   const iceServers = [
     { urls: "stun:stun.l.google.com:19302" },
     { urls: "stun:stun1.l.google.com:19302" },
     { urls: "stun:stun2.l.google.com:19302" },
     { urls: "stun:stun3.l.google.com:19302" },
     { urls: "stun:stun4.l.google.com:19302" },
-    // Free TURN servers for better NAT traversal
     {
       urls: "turn:openrelay.metered.ca:80",
       username: "openrelayproject",
@@ -133,7 +235,6 @@ function Meeting() {
     }
   ];
 
-  // Create WebRTC Peer Connection - FIX: Added onnegotiationneeded for late track renegotiation
   const createPeerConnection = useCallback((targetSocketId) => {
     if (peerConnectionsRef.current.has(targetSocketId)) {
       return peerConnectionsRef.current.get(targetSocketId);
@@ -157,7 +258,6 @@ function Meeting() {
 
     peerConnectionsRef.current.set(targetSocketId, peerConnection);
 
-    // FIX: onnegotiationneeded — automatically renegotiate when tracks are added late
     peerConnection.onnegotiationneeded = async () => {
       try {
         makingOfferRef.current.set(targetSocketId, true);
@@ -194,10 +294,8 @@ function Meeting() {
     };
 
     peerConnection.onconnectionstatechange = () => {
-      if (
-        peerConnection.connectionState === "failed" ||
-        peerConnection.connectionState === "closed"
-      ) {
+      const state = peerConnection.connectionState || peerConnection.iceConnectionState;
+      if (state === "failed" || state === "closed") {
         peerConnectionsRef.current.delete(targetSocketId);
         pendingCandidatesRef.current.delete(targetSocketId);
         makingOfferRef.current.delete(targetSocketId);
@@ -206,6 +304,9 @@ function Meeting() {
           delete updated[targetSocketId];
           return updated;
         });
+        addNetworkLog(`Peer connection with ${targetSocketId} closed/failed.`);
+      } else if (state === "disconnected") {
+        addNetworkLog(`⚠️ Peer connection with ${targetSocketId} temporarily disconnected.`);
       }
     };
 
@@ -229,23 +330,16 @@ function Meeting() {
       }
     };
 
-    // FIX: Polite peer pattern for glare handling
     const handleOffer = async ({ fromSocketId, offer }) => {
       try {
         const pc = createPeerConnection(fromSocketId);
         syncLocalTracksToPeers();
 
-        // Polite peer: if we're making an offer AND we have a higher socket ID, we're "impolite" and ignore
-        // If we're "polite" (lower socket ID), we rollback our offer and accept theirs
         const isImpolite = socket.id > fromSocketId;
         const offerCollision = makingOfferRef.current.get(fromSocketId) || pc.signalingState !== "stable";
 
-        if (isImpolite && offerCollision) {
-          // We're impolite — ignore the incoming offer, our offer takes precedence
-          return;
-        }
+        if (isImpolite && offerCollision) return;
 
-        // If we're polite and there's a collision, rollback first
         if (offerCollision) {
           await pc.setLocalDescription({ type: "rollback" });
         }
@@ -305,7 +399,6 @@ function Meeting() {
       setParticipants(users);
       participantsRef.current = users;
 
-      // Update emails for any existing remote streams
       setRemoteStreams((prev) => {
         let hasChanges = false;
         const updated = { ...prev };
@@ -319,7 +412,6 @@ function Meeting() {
       });
     };
 
-    // FIX: Merge chat history instead of overwriting
     const handleChatHistory = (history) => {
       if (!history || history.length === 0) return;
       setChatMessages((prev) => {
@@ -409,14 +501,28 @@ function Meeting() {
       leaveMeeting();
     };
 
-    // FIX: Only emit join-meeting from handleConnect — removed duplicate from startMeeting
+    // Socket Connection Lifecycle Listeners
     const handleConnect = () => {
-      if (!hasJoinedMeetingRef.current) return; // Only rejoin if we've already started
+      setSocketStatus("connected");
+      addNetworkLog("Socket connected to signaling server.");
+      if (!hasJoinedMeetingRef.current) return;
       const activePasscode = passcodeRef.current || sessionStorage.getItem(`meeting_passcode_${meetingId}`) || "";
       socket.emit("join-meeting", { meetingId, passcode: activePasscode });
     };
 
+    const handleDisconnect = (reason) => {
+      setSocketStatus("disconnected");
+      addNetworkLog(`⚠️ Socket disconnected: ${reason}`);
+    };
+
+    const handleConnectError = (error) => {
+      setSocketStatus("reconnecting");
+      addNetworkLog(`⚠️ Socket connect error: ${error.message || "Server unreachable"}`);
+    };
+
     socket.on("connect", handleConnect);
+    socket.on("disconnect", handleDisconnect);
+    socket.on("connect_error", handleConnectError);
     socket.on("user-joined", handleUserJoined);
     socket.on("offer", handleOffer);
     socket.on("answer", handleAnswer);
@@ -459,7 +565,6 @@ function Meeting() {
 
       if (stream) {
         localStreamRef.current = stream;
-        // FIX: Set camera/mic state based on actual tracks obtained
         const hasVideo = stream.getVideoTracks().length > 0;
         const hasAudio = stream.getAudioTracks().length > 0;
         setIsCameraOff(!hasVideo);
@@ -475,12 +580,9 @@ function Meeting() {
         setIsMuted(true);
       }
 
-      // FIX: Only emit join-meeting once, mark as joined
       hasJoinedMeetingRef.current = true;
       const activePasscode = passcodeRef.current || sessionStorage.getItem(`meeting_passcode_${meetingId}`) || "";
       socket.emit("join-meeting", { meetingId, passcode: activePasscode });
-
-      // FIX: Remove connecting overlay after setup
       setIsConnecting(false);
     };
 
@@ -489,6 +591,8 @@ function Meeting() {
     return () => {
       hasJoinedMeetingRef.current = false;
       socket.off("connect", handleConnect);
+      socket.off("disconnect", handleDisconnect);
+      socket.off("connect_error", handleConnectError);
       socket.off("user-joined", handleUserJoined);
       socket.off("offer", handleOffer);
       socket.off("answer", handleAnswer);
@@ -553,7 +657,6 @@ function Meeting() {
     };
   }, [meetingId]);
 
-  // Keep local video element synchronized with active stream
   useEffect(() => {
     const activeStream = screenStreamRef.current || localStreamRef.current;
     if (localVideoRef.current && activeStream) {
@@ -562,7 +665,6 @@ function Meeting() {
     }
   }, [isCameraOff, isScreenSharing]);
 
-  // Controls Handlers
   const toggleMicrophone = () => {
     if (!localStreamRef.current) return;
     const audioTracks = localStreamRef.current.getAudioTracks();
@@ -580,10 +682,8 @@ function Meeting() {
     });
   };
 
-  // FIX: Camera toggle - acquire new video track if none exists
   const toggleCamera = async () => {
     if (!localStreamRef.current) {
-      // No stream at all — try to get one
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
         localStreamRef.current = stream;
@@ -593,7 +693,6 @@ function Meeting() {
           localVideoRef.current.srcObject = stream;
           localVideoRef.current.play().catch(() => {});
         }
-        // Add tracks to all peer connections (onnegotiationneeded will auto-renegotiate)
         peerConnectionsRef.current.forEach((pc) => {
           stream.getTracks().forEach((track) => {
             const existingSender = pc.getSenders().find((s) => s.track && s.track.kind === track.kind);
@@ -615,12 +714,10 @@ function Meeting() {
     const videoTracks = localStreamRef.current.getVideoTracks();
 
     if (videoTracks.length === 0) {
-      // FIX: No video track exists — acquire a new one
       try {
         const newStream = await navigator.mediaDevices.getUserMedia({ video: true });
         const newVideoTrack = newStream.getVideoTracks()[0];
 
-        // Add to existing stream
         localStreamRef.current.addTrack(newVideoTrack);
         setIsCameraOff(false);
 
@@ -629,7 +726,6 @@ function Meeting() {
           localVideoRef.current.play().catch(() => {});
         }
 
-        // Add/replace track on all peer connections (onnegotiationneeded handles renegotiation)
         peerConnectionsRef.current.forEach((pc) => {
           const videoSender = pc.getSenders().find((s) => s.track?.kind === "video" || (!s.track && s._kind === "video"));
           if (videoSender) {
@@ -647,7 +743,6 @@ function Meeting() {
       return;
     }
 
-    // Normal toggle — tracks exist, just enable/disable
     const nextCameraOff = !isCameraOff;
     videoTracks.forEach((t) => (t.enabled = !nextCameraOff));
     setIsCameraOff(nextCameraOff);
@@ -734,31 +829,14 @@ function Meeting() {
         return;
       }
 
-      if (videoEl.readyState < 1) {
-        await new Promise((resolve) => {
-          const onMetadata = () => {
-            videoEl.removeEventListener("loadedmetadata", onMetadata);
-            resolve();
-          };
-          videoEl.addEventListener("loadedmetadata", onMetadata);
-          setTimeout(() => {
-            videoEl.removeEventListener("loadedmetadata", onMetadata);
-            resolve();
-          }, 1000);
-        });
-      }
-
       if (videoEl.readyState >= 1) {
         await videoEl.requestPictureInPicture();
-      } else {
-        console.warn("Video metadata not ready yet for Picture-in-Picture.");
       }
     } catch (err) {
       console.error("Picture-in-Picture error:", err);
     }
   };
 
-  // Toggle Host Privacy Shield (Host Only)
   const togglePrivacyShield = () => {
     if (!isHost) {
       alert("Only the host can toggle Privacy Shield mode.");
@@ -769,7 +847,6 @@ function Meeting() {
     socket.emit("toggle-privacy-mode", { meetingId, isPrivacyMode: nextPrivacy });
   };
 
-  // In-Browser HD Lecture Recording
   const startRecording = async () => {
     if (!isHost) {
       alert("Only the host can record this meeting.");
@@ -801,12 +878,10 @@ function Meeting() {
 
         const blob = new Blob(recordedChunksRef.current, { type: "video/webm" });
 
-        // FIX: Store blob URL for in-app playback
         const blobUrl = URL.createObjectURL(blob);
         setRecordingBlobUrl(blobUrl);
         setShowRecordingPlayer(true);
 
-        // Upload to server
         try {
           const response = await fetch(ENDPOINTS.MEETING_RECORDING(meetingId), {
             method: "POST",
@@ -829,7 +904,6 @@ function Meeting() {
         setRecordingDuration((prev) => prev + 1);
       }, 1000);
 
-      // Handle user stopping screen share via browser
       displayStream.getVideoTracks()[0].onended = () => {
         stopRecording();
       };
@@ -841,14 +915,12 @@ function Meeting() {
   const stopRecording = () => {
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
       mediaRecorderRef.current.stop();
-      // Stop the display stream tracks
       if (mediaRecorderRef.current.stream) {
         mediaRecorderRef.current.stream.getTracks().forEach((t) => t.stop());
       }
     }
   };
 
-  // FIX: Download recording from blob
   const downloadRecordingBlob = () => {
     if (!recordingBlobUrl) return;
     const a = document.createElement("a");
@@ -862,7 +934,6 @@ function Meeting() {
     }, 100);
   };
 
-  // FIX: Share recording via Web Share API
   const shareRecording = async () => {
     if (navigator.share) {
       try {
@@ -874,7 +945,6 @@ function Meeting() {
           files: [file]
         });
       } catch (err) {
-        // Fallback: copy link
         if (err.name !== "AbortError") {
           navigator.clipboard.writeText(window.location.href);
           alert("Link copied to clipboard! Share the meeting link with your recording.");
@@ -916,7 +986,6 @@ function Meeting() {
   };
 
   const totalTiles = 1 + Object.keys(remoteStreams).length;
-  // FIX: Improved grid layout with mobile breakpoints
   const getGridClass = () => {
     if (totalTiles === 1) return "grid-cols-1 max-w-4xl mx-auto";
     if (totalTiles === 2) return "grid-cols-1 sm:grid-cols-2 max-w-6xl mx-auto";
@@ -928,7 +997,7 @@ function Meeting() {
   return (
     <div className="h-screen w-screen flex flex-col bg-[#1a1a2e] text-slate-100 overflow-hidden relative select-none font-sans">
 
-      {/* FIX: CONNECTING OVERLAY — prevents flicker on refresh */}
+      {/* CONNECTING OVERLAY */}
       {isConnecting && (
         <div className="absolute inset-0 z-[100] bg-[#1a1a2e] flex flex-col items-center justify-center gap-6">
           <div className="w-16 h-16 border-4 border-[#8ab4f8]/30 border-t-[#8ab4f8] rounded-full animate-spin"></div>
@@ -939,11 +1008,37 @@ function Meeting() {
         </div>
       )}
 
+      {/* TOP NETWORK WARNING BANNER */}
+      {!isOnline && (
+        <div className="bg-red-600 text-white text-xs py-2 px-4 text-center font-bold flex items-center justify-center gap-2 z-50 animate-pulse">
+          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+          </svg>
+          <span>⚠️ Internet Offline — Reconnecting automatically once network is available...</span>
+          <button onClick={() => setShowNetworkModal(true)} className="underline ml-2 hover:text-slate-200">Diagnostics</button>
+        </div>
+      )}
+
+      {isOnline && socketStatus === "reconnecting" && (
+        <div className="bg-amber-500 text-slate-950 text-xs py-1.5 px-4 text-center font-bold flex items-center justify-center gap-2 z-50">
+          <div className="w-3 h-3 border-2 border-slate-950/30 border-t-slate-950 rounded-full animate-spin"></div>
+          <span>⚡ Weak Network — Reconnecting to meeting server...</span>
+          <button onClick={() => setShowNetworkModal(true)} className="underline ml-2 hover:text-slate-800">Check Stats</button>
+        </div>
+      )}
+
+      {isOnline && socketStatus === "connected" && networkQuality === "weak" && (
+        <div className="bg-amber-500/90 text-slate-950 text-xs py-1.5 px-4 text-center font-bold flex items-center justify-center gap-2 z-40">
+          <span>📶 Weak Network Signal (Latency: {networkStats.ping}ms) — Consider turning off camera to save bandwidth.</span>
+          <button onClick={() => setShowNetworkModal(true)} className="underline ml-2 hover:text-slate-800">Diagnostics</button>
+        </div>
+      )}
+
       {/* TOP HEADER */}
       <header className="h-14 sm:h-16 px-3 sm:px-6 bg-[#16213e] border-b border-[#0f3460]/50 flex items-center justify-between z-30 shrink-0">
         <div className="flex items-center gap-2 sm:gap-4 min-w-0">
           <div className="flex items-center gap-2 bg-[#0f3460] border border-[#533483]/40 px-2.5 sm:px-3.5 py-1.5 rounded-xl min-w-0">
-            <span className="w-2 h-2 sm:w-2.5 sm:h-2.5 rounded-full bg-emerald-400 animate-pulse shrink-0"></span>
+            <span className={`w-2 h-2 sm:w-2.5 sm:h-2.5 rounded-full shrink-0 ${isOnline && socketStatus === "connected" ? "bg-emerald-400 animate-pulse" : "bg-red-500 animate-ping"}`}></span>
             <span className="font-mono font-bold text-xs sm:text-sm text-[#8ab4f8] tracking-wider shrink-0">
               {meetingId}
             </span>
@@ -958,18 +1053,28 @@ function Meeting() {
             </div>
           )}
 
-          {/* Privacy Shield Badge */}
-          {isPrivacyMode && (
-            <div className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 bg-amber-500/20 border border-amber-500/40 text-amber-300 text-xs font-bold rounded-xl">
-              <svg className="w-4 h-4 text-amber-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
-              </svg>
-              <span>Privacy Shield ON</span>
-            </div>
-          )}
+          {/* Network Quality Badge in Header */}
+          <button
+            onClick={() => setShowNetworkModal(true)}
+            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-bold border transition-colors ${
+              !isOnline || socketStatus === "disconnected"
+                ? "bg-red-600/20 text-red-400 border-red-500/40"
+                : networkQuality === "weak" || networkQuality === "poor"
+                ? "bg-amber-500/20 text-amber-300 border-amber-500/40"
+                : "bg-emerald-500/10 text-emerald-400 border-emerald-500/30"
+            }`}
+            title="Click for Network Diagnostics"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.111 16.404a5.5 5.5 0 017.778 0M12 20h.01m-7.08-7.071c3.904-3.905 10.236-3.905 14.141 0M1.394 9.393c5.857-5.857 15.355-5.857 21.213 0" />
+            </svg>
+            <span className="hidden sm:inline">
+              {!isOnline ? "Offline" : `${networkStats.ping}ms`}
+            </span>
+          </button>
         </div>
 
-        {/* Center Title — hidden on mobile */}
+        {/* Center Title */}
         <div className="hidden md:flex items-center gap-2">
           <span className="font-bold text-white text-sm">genzis-meet</span>
           <span className="text-xs text-slate-500">•</span>
@@ -1015,8 +1120,26 @@ function Meeting() {
                 </div>
               )}
 
-              {/* Mute Indicator */}
-              <div className="absolute top-2 sm:top-3 right-2 sm:right-3 z-20">
+              {/* Top Right Controls: Network Signal & Audio Mute */}
+              <div className="absolute top-2 sm:top-3 right-2 sm:right-3 z-20 flex items-center gap-1.5">
+                <button
+                  onClick={() => setShowNetworkModal(true)}
+                  className={`px-2 py-1 rounded-full border text-[10px] font-bold flex items-center gap-1 backdrop-blur-md ${
+                    networkQuality === "excellent" || networkQuality === "good"
+                      ? "text-emerald-400 bg-emerald-500/20 border-emerald-500/30"
+                      : networkQuality === "weak"
+                      ? "text-amber-400 bg-amber-500/20 border-amber-500/30"
+                      : "text-red-400 bg-red-600/30 border-red-500/40"
+                  }`}
+                  title="Network Health"
+                >
+                  <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.111 16.404a5.5 5.5 0 017.778 0M12 20h.01m-7.08-7.071c3.904-3.905 10.236-3.905 14.141 0M1.394 9.393c5.857-5.857 15.355-5.857 21.213 0" />
+                  </svg>
+                  <span className="hidden md:inline">{networkStats.ping}ms</span>
+                </button>
+
+                {/* Mute Indicator */}
                 {isMuted ? (
                   <span className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-red-600/90 text-white flex items-center justify-center text-xs shadow-md backdrop-blur-md">
                     <svg className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -1080,6 +1203,7 @@ function Meeting() {
                   isCameraOff={rState.isCameraOff}
                   isHandRaised={rState.isHandRaised}
                   isPrivacyMode={isPrivacyMode}
+                  networkQuality={networkQuality}
                 />
               );
             })}
@@ -1101,7 +1225,7 @@ function Meeting() {
           )}
         </main>
 
-        {/* SIDE DRAWER: IN-CALL CHAT — FIX: Full screen on mobile */}
+        {/* SIDE DRAWER: IN-CALL CHAT */}
         <div className={`absolute top-0 right-0 bottom-0 z-40 w-full sm:w-80 transition-all duration-200 ${showChat ? "translate-x-0 opacity-100 pointer-events-auto" : "translate-x-full opacity-0 pointer-events-none"}`}>
           <Chat
             meetingId={meetingId}
@@ -1163,9 +1287,8 @@ function Meeting() {
         )}
       </div>
 
-      {/* FIX: RESPONSIVE CONTROL BAR — scrollable on mobile */}
+      {/* RESPONSIVE CONTROL BAR */}
       <footer className="h-16 sm:h-20 bg-[#16213e] border-t border-[#0f3460]/50 px-2 sm:px-6 flex items-center justify-between z-30 shrink-0 relative">
-        {/* Left Meeting Info */}
         <div className="flex items-center gap-1 sm:gap-2 shrink-0">
           <button
             onClick={() => setShowInfoModal(true)}
@@ -1176,9 +1299,27 @@ function Meeting() {
             </svg>
             <span className="hidden sm:inline">Details</span>
           </button>
+
+          {/* Network Diagnostics button in footer */}
+          <button
+            onClick={() => setShowNetworkModal(true)}
+            className={`p-2 sm:px-3 sm:py-2 rounded-full text-xs font-semibold border transition-all flex items-center gap-1 ${
+              !isOnline || socketStatus === "disconnected"
+                ? "bg-red-600/20 border-red-500/40 text-red-400"
+                : networkQuality === "weak"
+                ? "bg-amber-500/20 border-amber-500/40 text-amber-300"
+                : "bg-[#0f3460] border-[#533483]/30 text-slate-200"
+            }`}
+            title="Network Diagnostics"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.111 16.404a5.5 5.5 0 017.778 0M12 20h.01m-7.08-7.071c3.904-3.905 10.236-3.905 14.141 0M1.394 9.393c5.857-5.857 15.355-5.857 21.213 0" />
+            </svg>
+            <span className="hidden md:inline">Signal</span>
+          </button>
         </div>
 
-        {/* CENTER CONTROLS — FIX: Horizontally scrollable on mobile */}
+        {/* CENTER CONTROLS */}
         <div className="flex items-center gap-1.5 sm:gap-3 overflow-x-auto no-scrollbar px-1 sm:px-0 max-w-[60vw] sm:max-w-none">
           {/* Mute Mic */}
           <button
@@ -1286,7 +1427,7 @@ function Meeting() {
             </svg>
           </button>
 
-          {/* Privacy Shield — hidden on mobile */}
+          {/* Privacy Shield */}
           <button
             onClick={togglePrivacyShield}
             className={`w-10 h-10 sm:w-12 sm:h-12 rounded-full flex items-center justify-center transition-all duration-200 shadow-md shrink-0 hidden lg:flex ${
@@ -1299,7 +1440,7 @@ function Meeting() {
             </svg>
           </button>
 
-          {/* PiP — hidden on small screens */}
+          {/* PiP */}
           <button
             onClick={togglePictureInPicture}
             className="w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-[#0f3460] hover:bg-[#533483]/50 text-slate-100 flex items-center justify-center transition-all shadow-md shrink-0 hidden lg:flex"
@@ -1313,7 +1454,6 @@ function Meeting() {
 
         {/* Right Drawer Triggers & End Call */}
         <div className="flex items-center gap-1.5 sm:gap-3 shrink-0">
-          {/* People Drawer */}
           <button
             onClick={() => {
               setShowParticipants(!showParticipants);
@@ -1329,7 +1469,6 @@ function Meeting() {
             <span className="hidden md:inline">{participants.length}</span>
           </button>
 
-          {/* Chat Drawer */}
           <button
             onClick={() => {
               setShowChat(!showChat);
@@ -1345,7 +1484,6 @@ function Meeting() {
             <span className="hidden md:inline">Chat</span>
           </button>
 
-          {/* End Call / End Meeting */}
           {isHost ? (
             <div className="flex items-center gap-1 sm:gap-2">
               <button
@@ -1426,7 +1564,110 @@ function Meeting() {
         </div>
       )}
 
-      {/* FIX: RECORDING PLAYER MODAL — Play/Download/Share */}
+      {/* NETWORK DIAGNOSTICS MODAL */}
+      {showNetworkModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
+          <div className="w-full max-w-lg bg-[#16213e] rounded-2xl p-6 relative border border-[#0f3460] shadow-2xl">
+            <button onClick={() => setShowNetworkModal(false)} className="absolute top-4 right-4 text-slate-400 hover:text-white">✕</button>
+
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 rounded-xl bg-[#8ab4f8]/20 text-[#8ab4f8] flex items-center justify-center font-bold">
+                📶
+              </div>
+              <div>
+                <h3 className="text-xl font-bold text-white">Network Diagnostics</h3>
+                <p className="text-xs text-slate-400">Live connection metrics & troubleshooting</p>
+              </div>
+            </div>
+
+            {/* Diagnostics Stats Grid */}
+            <div className="grid grid-cols-2 gap-3 mb-4">
+              <div className="p-3.5 rounded-xl bg-[#1a1a2e] border border-[#0f3460]/50">
+                <span className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold">Internet Status</span>
+                <div className="flex items-center gap-2 mt-1">
+                  <span className={`w-2.5 h-2.5 rounded-full ${isOnline ? "bg-emerald-400" : "bg-red-500"}`}></span>
+                  <span className="text-sm font-bold text-white">{isOnline ? "Online" : "Offline"}</span>
+                </div>
+              </div>
+
+              <div className="p-3.5 rounded-xl bg-[#1a1a2e] border border-[#0f3460]/50">
+                <span className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold">Socket Gateway</span>
+                <div className="flex items-center gap-2 mt-1">
+                  <span className={`w-2.5 h-2.5 rounded-full ${socketStatus === "connected" ? "bg-emerald-400" : "bg-amber-400 animate-ping"}`}></span>
+                  <span className="text-sm font-bold text-white capitalize">{socketStatus}</span>
+                </div>
+              </div>
+
+              <div className="p-3.5 rounded-xl bg-[#1a1a2e] border border-[#0f3460]/50">
+                <span className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold">Latency / Ping</span>
+                <p className={`text-base font-mono font-bold mt-1 ${networkStats.ping > 300 ? "text-red-400" : networkStats.ping > 150 ? "text-amber-400" : "text-emerald-400"}`}>
+                  {isOnline ? `${networkStats.ping} ms` : "N/A"}
+                </p>
+              </div>
+
+              <div className="p-3.5 rounded-xl bg-[#1a1a2e] border border-[#0f3460]/50">
+                <span className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold">Packet Loss Rate</span>
+                <p className={`text-base font-mono font-bold mt-1 ${networkStats.packetLoss > 5 ? "text-red-400" : "text-emerald-400"}`}>
+                  {isOnline ? `${networkStats.packetLoss}%` : "100%"}
+                </p>
+              </div>
+            </div>
+
+            {/* Connection Details */}
+            <div className="p-3.5 rounded-xl bg-[#1a1a2e] border border-[#0f3460]/50 mb-4 space-y-2 text-xs">
+              <div className="flex justify-between">
+                <span className="text-slate-400">ICE Transport:</span>
+                <span className="font-mono text-[#8ab4f8] font-bold">{networkStats.candidateType}</span>
+              </div>
+              <div className="flex justify-between border-t border-[#0f3460]/30 pt-2">
+                <span className="text-slate-400">WebRTC State:</span>
+                <span className="font-mono text-emerald-400 font-bold capitalize">{networkStats.iceState}</span>
+              </div>
+            </div>
+
+            {/* Diagnostics Advice / Log */}
+            <div className="mb-4">
+              <span className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold block mb-1.5">Recommendations</span>
+              {networkQuality === "weak" || networkQuality === "poor" ? (
+                <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs space-y-1">
+                  <p>• Turn off your video camera to prioritize clear audio.</p>
+                  <p>• Move closer to your Wi-Fi router or switch to Ethernet.</p>
+                  <p>• Close background streaming applications (YouTube, downloads).</p>
+                </div>
+              ) : !isOnline ? (
+                <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/30 text-red-300 text-xs space-y-1">
+                  <p>• Check your Wi-Fi connection or mobile network data.</p>
+                  <p>• The app will automatically reconnect as soon as signal returns.</p>
+                </div>
+              ) : (
+                <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs">
+                  ✓ Network connection is optimal. High quality audio & video supported.
+                </div>
+              )}
+            </div>
+
+            {/* Event Log */}
+            <div className="space-y-1 max-h-28 overflow-y-auto font-mono text-[10px] bg-black/50 p-2.5 rounded-xl border border-[#0f3460]/30 text-slate-400 mb-4">
+              {networkStats.logs.length === 0 ? (
+                <p className="text-slate-600 italic">No network alerts logged</p>
+              ) : (
+                networkStats.logs.map((log, i) => (
+                  <p key={i} className="leading-tight">{log}</p>
+                ))
+              )}
+            </div>
+
+            <button
+              onClick={() => setShowNetworkModal(false)}
+              className="w-full py-2.5 bg-[#8ab4f8] hover:bg-[#aecbfa] text-[#1a1a2e] font-bold rounded-xl text-xs transition-colors"
+            >
+              Close Diagnostics
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* RECORDING PLAYER MODAL */}
       {showRecordingPlayer && recordingBlobUrl && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/90 backdrop-blur-md">
           <div className="w-full max-w-2xl bg-[#16213e] rounded-2xl p-6 relative border border-[#0f3460]">

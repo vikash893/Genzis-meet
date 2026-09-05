@@ -6,7 +6,8 @@ function RemoteVideo({
   isMuted = false,
   isCameraOff = false,
   isHandRaised = false,
-  isPrivacyMode = false
+  isPrivacyMode = false,
+  networkQuality = "good" // "excellent" | "good" | "weak" | "poor" | "offline"
 }) {
   const videoRef = useRef(null);
 
@@ -23,6 +24,26 @@ function RemoteVideo({
     email && typeof email === "string"
       ? email.charAt(0).toUpperCase()
       : "U";
+
+  // Signal Badge Helper
+  const getSignalBadge = () => {
+    switch (networkQuality) {
+      case "excellent":
+        return { color: "text-emerald-400 bg-emerald-500/20 border-emerald-500/30", text: "Strong Signal", bars: 3 };
+      case "good":
+        return { color: "text-emerald-400 bg-emerald-500/20 border-emerald-500/30", text: "Good Signal", bars: 3 };
+      case "weak":
+        return { color: "text-amber-400 bg-amber-500/20 border-amber-500/30", text: "Weak Signal", bars: 2 };
+      case "poor":
+        return { color: "text-red-400 bg-red-500/20 border-red-500/30", text: "Poor Connection", bars: 1 };
+      case "offline":
+        return { color: "text-red-400 bg-red-600/30 border-red-500/40", text: "Disconnected", bars: 0 };
+      default:
+        return { color: "text-emerald-400 bg-emerald-500/20 border-emerald-500/30", text: "Connected", bars: 3 };
+    }
+  };
+
+  const signal = getSignalBadge();
 
   return (
     <div className="relative group w-full h-full min-h-[140px] sm:min-h-[180px] md:min-h-[220px] rounded-xl sm:rounded-2xl overflow-hidden bg-[#16213e] border border-[#0f3460]/50 flex items-center justify-center transition-all">
@@ -55,8 +76,17 @@ function RemoteVideo({
         </div>
       )}
 
-      {/* Audio Muted / Active Badge */}
-      <div className="absolute top-2 sm:top-3 right-2 sm:right-3 z-20">
+      {/* Top Right Controls: Network Quality & Audio Mute */}
+      <div className="absolute top-2 sm:top-3 right-2 sm:right-3 z-20 flex items-center gap-1.5">
+        {/* Network Signal Indicator */}
+        <div className={`px-2 py-1 rounded-full border text-[10px] font-bold flex items-center gap-1 backdrop-blur-md ${signal.color}`} title={signal.text}>
+          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.111 16.404a5.5 5.5 0 017.778 0M12 20h.01m-7.08-7.071c3.904-3.905 10.236-3.905 14.141 0M1.394 9.393c5.857-5.857 15.355-5.857 21.213 0" />
+          </svg>
+          <span className="hidden md:inline">{signal.text}</span>
+        </div>
+
+        {/* Mute Indicator */}
         {isMuted ? (
           <span className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-red-600/90 text-white flex items-center justify-center text-xs shadow-md backdrop-blur-md">
             <svg className="w-3.5 h-3.5 sm:w-4 sm:h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
