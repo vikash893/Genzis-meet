@@ -246,6 +246,42 @@ meetingRouter.post(
 );
 
 meetingRouter.get(
+    "/:meetingId/recording/stream",
+    authMiddleware,
+    async (req, res) => {
+        try {
+            const meeting = await Meeting.findOne({ meetingId: req.params.meetingId });
+            if (!meeting) return res.status(404).json({ message: "Meeting not found" });
+
+            const recording = await Recording.findOne({ meetingId: req.params.meetingId }).lean();
+            if (!recording) return res.status(404).json({ message: "Recording not found" });
+
+            if (!mongoose.connection.db) return res.status(503).json({ message: "Database is not ready" });
+
+            const bucket = new mongoose.mongo.GridFSBucket(mongoose.connection.db, { bucketName: "meetingRecordings" });
+            const downloadStream = bucket.openDownloadStream(new mongoose.Types.ObjectId(recording.fileId));
+
+            res.setHeader("Content-Type", recording.mimeType || "video/webm");
+            res.setHeader("Content-Disposition", "inline");
+            if (recording.size) {
+                res.setHeader("Content-Length", recording.size);
+            }
+            res.setHeader("Accept-Ranges", "bytes");
+
+            downloadStream.on("error", (err) => {
+                console.error("GridFS stream error:", err);
+                if (!res.headersSent) res.status(500).json({ message: "Failed to stream recording" });
+            });
+
+            return downloadStream.pipe(res);
+        } catch (error) {
+            console.error("Stream recording error:", error);
+            return res.status(500).json({ message: "Failed to stream recording" });
+        }
+    }
+);
+
+meetingRouter.get(
     "/:meetingId/recording",
     authMiddleware,
     async (req, res) => {

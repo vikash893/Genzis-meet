@@ -195,6 +195,7 @@ io.use((socket, next) => {
 
 const meetingUsers = new Map();
 const meetingHosts = new Map();
+const disconnectTimers = new Map();
 
 
 // ==========================================
@@ -359,6 +360,14 @@ io.on(
                     } catch (error) {
                         console.error("Attendance save error:", error);
                     }
+                }
+
+                // Cancel pending disconnect timer if user reconnected
+                const timerKey = `${meetingId}:${email}`;
+                if (disconnectTimers.has(timerKey)) {
+                    clearTimeout(disconnectTimers.get(timerKey));
+                    disconnectTimers.delete(timerKey);
+                    console.log(`Cancelled disconnect timer for ${email} in ${meetingId}`);
                 }
 
                 console.log(
@@ -903,34 +912,63 @@ io.on(
                 if (disconnectedIndex === -1) continue;
 
                 const disconnectedUser = users[disconnectedIndex];
-                users.splice(disconnectedIndex, 1);
+                const timerKey = `${meetingId}:${disconnectedUser.email}`;
 
-                try {
-                    const leftAt = new Date();
-                    await MeetingAttendance.findOneAndUpdate(
-                        { meetingId, email: disconnectedUser.email, leftAt: null },
-                        { leftAt },
-                        { sort: { joinedAt: -1 } }
+                // Cancel any existing timer for this user (shouldn't happen, but be safe)
+                if (disconnectTimers.has(timerKey)) {
+                    clearTimeout(disconnectTimers.get(timerKey));
+                }
+
+                // Grace period: wait 5 seconds before actually removing
+                const timer = setTimeout(async () => {
+                    disconnectTimers.delete(timerKey);
+
+                    const currentUsers = meetingUsers.get(meetingId);
+                    if (!currentUsers) return;
+
+                    // Check if user reconnected with a new socket
+                    const reconnectedUser = currentUsers.find(
+                        (u) => u.email && u.email.toLowerCase() === disconnectedUser.email.toLowerCase() && u.socketId !== socket.id
                     );
-                    if (socket.user && socket.user.id) {
-                        await User.findOneAndUpdate(
-                            { _id: socket.user.id, "meetingHistory.meetingId": meetingId, "meetingHistory.leftAt": null },
-                            { $set: { "meetingHistory.$.leftAt": leftAt } },
-                            { sort: { "meetingHistory.joinedAt": -1 } }
-                        );
+                    if (reconnectedUser) {
+                        console.log(`User ${disconnectedUser.email} reconnected to ${meetingId}, skipping removal`);
+                        return;
                     }
-                } catch (error) {
-                    console.error("Attendance close error:", error);
-                }
 
-                if (users.length === 0) {
-                    meetingUsers.delete(meetingId);
-                    meetingHosts.delete(meetingId);
-                    console.log(`Meeting ${meetingId} is now empty`);
-                } else {
-                    io.to(meetingId).emit("participants", users);
-                    io.to(meetingId).emit("user-left", { socketId: socket.id, email: disconnectedUser.email });
-                }
+                    // User did not reconnect — remove them
+                    const removeIndex = currentUsers.findIndex((u) => u.socketId === socket.id);
+                    if (removeIndex === -1) return;
+                    currentUsers.splice(removeIndex, 1);
+
+                    try {
+                        const leftAt = new Date();
+                        await MeetingAttendance.findOneAndUpdate(
+                            { meetingId, email: disconnectedUser.email, leftAt: null },
+                            { leftAt },
+                            { sort: { joinedAt: -1 } }
+                        );
+                        if (socket.user && socket.user.id) {
+                            await User.findOneAndUpdate(
+                                { _id: socket.user.id, "meetingHistory.meetingId": meetingId, "meetingHistory.leftAt": null },
+                                { $set: { "meetingHistory.$.leftAt": leftAt } },
+                                { sort: { "meetingHistory.joinedAt": -1 } }
+                            );
+                        }
+                    } catch (error) {
+                        console.error("Attendance close error:", error);
+                    }
+
+                    if (currentUsers.length === 0) {
+                        meetingUsers.delete(meetingId);
+                        meetingHosts.delete(meetingId);
+                        console.log(`Meeting ${meetingId} is now empty`);
+                    } else {
+                        io.to(meetingId).emit("participants", currentUsers);
+                        io.to(meetingId).emit("user-left", { socketId: socket.id, email: disconnectedUser.email });
+                    }
+                }, 5000);
+
+                disconnectTimers.set(timerKey, timer);
             }
         });
 

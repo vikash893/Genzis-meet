@@ -58,16 +58,21 @@ function Meeting() {
   const [participants, setParticipants] = useState([]);
   const [chatMessages, setChatMessages] = useState([]);
   const [isMuted, setIsMuted] = useState(false);
-  const [isCameraOff, setIsCameraOff] = useState(false);
+  const [isCameraOff, setIsCameraOff] = useState(true); // FIX: Start true until media acquired
   const [isScreenSharing, setIsScreenSharing] = useState(false);
   const [isHandRaised, setIsHandRaised] = useState(false);
 
   // Recording State
   const [isRecording, setIsRecording] = useState(false);
   const [recordingDuration, setRecordingDuration] = useState(0);
+  const [recordingBlobUrl, setRecordingBlobUrl] = useState(null); // FIX: For in-app playback
+  const [showRecordingPlayer, setShowRecordingPlayer] = useState(false); // FIX: Recording modal
 
   // Privacy Shield State
   const [isPrivacyMode, setIsPrivacyMode] = useState(false);
+
+  // FIX: Loading/Connecting State to prevent flicker
+  const [isConnecting, setIsConnecting] = useState(true);
 
   // Drawers & Modals
   const [showChat, setShowChat] = useState(false);
@@ -85,6 +90,8 @@ function Meeting() {
   const [remoteStates, setRemoteStates] = useState({});
 
   const hasJoinedMeetingRef = useRef(false);
+  // FIX: For polite peer pattern - track if we are making an offer
+  const makingOfferRef = useRef(new Map());
 
   const syncLocalTracksToPeers = useCallback(() => {
     const activeStream = screenStreamRef.current || localStreamRef.current;
@@ -106,21 +113,33 @@ function Meeting() {
     });
   }, []);
 
-  // Create WebRTC Peer Connection
+  // ICE Server Configuration with TURN fallback
+  const iceServers = [
+    { urls: "stun:stun.l.google.com:19302" },
+    { urls: "stun:stun1.l.google.com:19302" },
+    { urls: "stun:stun2.l.google.com:19302" },
+    { urls: "stun:stun3.l.google.com:19302" },
+    { urls: "stun:stun4.l.google.com:19302" },
+    // Free TURN servers for better NAT traversal
+    {
+      urls: "turn:openrelay.metered.ca:80",
+      username: "openrelayproject",
+      credential: "openrelayproject"
+    },
+    {
+      urls: "turn:openrelay.metered.ca:443",
+      username: "openrelayproject",
+      credential: "openrelayproject"
+    }
+  ];
+
+  // Create WebRTC Peer Connection - FIX: Added onnegotiationneeded for late track renegotiation
   const createPeerConnection = useCallback((targetSocketId) => {
     if (peerConnectionsRef.current.has(targetSocketId)) {
       return peerConnectionsRef.current.get(targetSocketId);
     }
 
-    const peerConnection = new RTCPeerConnection({
-      iceServers: [
-        { urls: "stun:stun.l.google.com:19302" },
-        { urls: "stun:stun1.l.google.com:19302" },
-        { urls: "stun:stun2.l.google.com:19302" },
-        { urls: "stun:stun3.l.google.com:19302" },
-        { urls: "stun:stun4.l.google.com:19302" }
-      ]
-    });
+    const peerConnection = new RTCPeerConnection({ iceServers });
 
     const activeStream = screenStreamRef.current || localStreamRef.current;
     if (activeStream) {
@@ -137,6 +156,21 @@ function Meeting() {
     }
 
     peerConnectionsRef.current.set(targetSocketId, peerConnection);
+
+    // FIX: onnegotiationneeded — automatically renegotiate when tracks are added late
+    peerConnection.onnegotiationneeded = async () => {
+      try {
+        makingOfferRef.current.set(targetSocketId, true);
+        const offer = await peerConnection.createOffer();
+        if (peerConnection.signalingState !== "stable") return;
+        await peerConnection.setLocalDescription(offer);
+        socket.emit("offer", { targetSocketId, offer: peerConnection.localDescription });
+      } catch (err) {
+        console.error("Negotiation needed error:", err);
+      } finally {
+        makingOfferRef.current.set(targetSocketId, false);
+      }
+    };
 
     peerConnection.ontrack = (event) => {
       const stream = event.streams[0] || (event.track ? new MediaStream([event.track]) : null);
@@ -166,6 +200,7 @@ function Meeting() {
       ) {
         peerConnectionsRef.current.delete(targetSocketId);
         pendingCandidatesRef.current.delete(targetSocketId);
+        makingOfferRef.current.delete(targetSocketId);
         setRemoteStreams((prev) => {
           const updated = { ...prev };
           delete updated[targetSocketId];
@@ -183,18 +218,37 @@ function Meeting() {
       try {
         const pc = createPeerConnection(user.socketId);
         syncLocalTracksToPeers();
+        makingOfferRef.current.set(user.socketId, true);
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
         socket.emit("offer", { targetSocketId: user.socketId, offer });
       } catch (err) {
         console.error("Offer error:", err);
+      } finally {
+        makingOfferRef.current.set(user.socketId, false);
       }
     };
 
+    // FIX: Polite peer pattern for glare handling
     const handleOffer = async ({ fromSocketId, offer }) => {
       try {
         const pc = createPeerConnection(fromSocketId);
         syncLocalTracksToPeers();
+
+        // Polite peer: if we're making an offer AND we have a higher socket ID, we're "impolite" and ignore
+        // If we're "polite" (lower socket ID), we rollback our offer and accept theirs
+        const isImpolite = socket.id > fromSocketId;
+        const offerCollision = makingOfferRef.current.get(fromSocketId) || pc.signalingState !== "stable";
+
+        if (isImpolite && offerCollision) {
+          // We're impolite — ignore the incoming offer, our offer takes precedence
+          return;
+        }
+
+        // If we're polite and there's a collision, rollback first
+        if (offerCollision) {
+          await pc.setLocalDescription({ type: "rollback" });
+        }
 
         await pc.setRemoteDescription(new RTCSessionDescription(offer));
 
@@ -208,7 +262,7 @@ function Meeting() {
         await pc.setLocalDescription(answer);
         socket.emit("answer", { targetSocketId: fromSocketId, answer });
       } catch (err) {
-        console.error("Offer error:", err);
+        console.error("Offer handling error:", err);
       }
     };
 
@@ -265,8 +319,17 @@ function Meeting() {
       });
     };
 
+    // FIX: Merge chat history instead of overwriting
     const handleChatHistory = (history) => {
-      setChatMessages(history || []);
+      if (!history || history.length === 0) return;
+      setChatMessages((prev) => {
+        const existingIds = new Set(prev.map((m) => m.id));
+        const newMessages = history.filter((m) => !existingIds.has(m.id));
+        if (newMessages.length === 0) return prev;
+        const merged = [...prev, ...newMessages];
+        merged.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+        return merged;
+      });
     };
 
     const handleReceiveMessage = (chatMessage) => {
@@ -283,6 +346,7 @@ function Meeting() {
       if (pc) pc.close();
       peerConnectionsRef.current.delete(socketId);
       pendingCandidatesRef.current.delete(socketId);
+      makingOfferRef.current.delete(socketId);
 
       setRemoteStreams((prev) => {
         const updated = { ...prev };
@@ -345,7 +409,9 @@ function Meeting() {
       leaveMeeting();
     };
 
+    // FIX: Only emit join-meeting from handleConnect — removed duplicate from startMeeting
     const handleConnect = () => {
+      if (!hasJoinedMeetingRef.current) return; // Only rejoin if we've already started
       const activePasscode = passcodeRef.current || sessionStorage.getItem(`meeting_passcode_${meetingId}`) || "";
       socket.emit("join-meeting", { meetingId, passcode: activePasscode });
     };
@@ -387,26 +453,35 @@ function Meeting() {
             stream = await navigator.mediaDevices.getUserMedia({ video: false, audio: true });
           } catch (err3) {
             console.error("Camera and mic unavailable:", err3);
-            setIsCameraOff(true);
-            setIsMuted(true);
           }
         }
       }
 
       if (stream) {
         localStreamRef.current = stream;
+        // FIX: Set camera/mic state based on actual tracks obtained
+        const hasVideo = stream.getVideoTracks().length > 0;
+        const hasAudio = stream.getAudioTracks().length > 0;
+        setIsCameraOff(!hasVideo);
+        setIsMuted(!hasAudio);
+
         if (localVideoRef.current) {
           localVideoRef.current.srcObject = stream;
           localVideoRef.current.play().catch(() => {});
         }
         syncLocalTracksToPeers();
+      } else {
+        setIsCameraOff(true);
+        setIsMuted(true);
       }
 
-      if (!hasJoinedMeetingRef.current) {
-        hasJoinedMeetingRef.current = true;
-        const activePasscode = passcodeRef.current || sessionStorage.getItem(`meeting_passcode_${meetingId}`) || "";
-        socket.emit("join-meeting", { meetingId, passcode: activePasscode });
-      }
+      // FIX: Only emit join-meeting once, mark as joined
+      hasJoinedMeetingRef.current = true;
+      const activePasscode = passcodeRef.current || sessionStorage.getItem(`meeting_passcode_${meetingId}`) || "";
+      socket.emit("join-meeting", { meetingId, passcode: activePasscode });
+
+      // FIX: Remove connecting overlay after setup
+      setIsConnecting(false);
     };
 
     startMeeting();
@@ -441,7 +516,7 @@ function Meeting() {
       peerConnectionsRef.current.forEach((pc) => pc.close());
       peerConnectionsRef.current.clear();
       pendingCandidatesRef.current.clear();
-      // eslint-disable-next-line react-hooks/exhaustive-deps
+      makingOfferRef.current.clear();
     };
   }, [meetingId, email, createPeerConnection, syncLocalTracksToPeers]);
 
@@ -505,11 +580,74 @@ function Meeting() {
     });
   };
 
-  const toggleCamera = () => {
-    if (!localStreamRef.current) return;
-    const videoTracks = localStreamRef.current.getVideoTracks();
-    if (videoTracks.length === 0) return;
+  // FIX: Camera toggle - acquire new video track if none exists
+  const toggleCamera = async () => {
+    if (!localStreamRef.current) {
+      // No stream at all — try to get one
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+        localStreamRef.current = stream;
+        setIsCameraOff(false);
+        setIsMuted(false);
+        if (localVideoRef.current) {
+          localVideoRef.current.srcObject = stream;
+          localVideoRef.current.play().catch(() => {});
+        }
+        // Add tracks to all peer connections (onnegotiationneeded will auto-renegotiate)
+        peerConnectionsRef.current.forEach((pc) => {
+          stream.getTracks().forEach((track) => {
+            const existingSender = pc.getSenders().find((s) => s.track && s.track.kind === track.kind);
+            if (existingSender) {
+              existingSender.replaceTrack(track);
+            } else {
+              pc.addTrack(track, stream);
+            }
+          });
+        });
+        socket.emit("user-media-state", { meetingId, email, isMuted: false, isCameraOff: false });
+      } catch (err) {
+        console.error("Could not acquire media:", err);
+        alert("Camera/microphone permission is required. Please allow access in your browser settings.");
+      }
+      return;
+    }
 
+    const videoTracks = localStreamRef.current.getVideoTracks();
+
+    if (videoTracks.length === 0) {
+      // FIX: No video track exists — acquire a new one
+      try {
+        const newStream = await navigator.mediaDevices.getUserMedia({ video: true });
+        const newVideoTrack = newStream.getVideoTracks()[0];
+
+        // Add to existing stream
+        localStreamRef.current.addTrack(newVideoTrack);
+        setIsCameraOff(false);
+
+        if (localVideoRef.current) {
+          localVideoRef.current.srcObject = localStreamRef.current;
+          localVideoRef.current.play().catch(() => {});
+        }
+
+        // Add/replace track on all peer connections (onnegotiationneeded handles renegotiation)
+        peerConnectionsRef.current.forEach((pc) => {
+          const videoSender = pc.getSenders().find((s) => s.track?.kind === "video" || (!s.track && s._kind === "video"));
+          if (videoSender) {
+            videoSender.replaceTrack(newVideoTrack);
+          } else {
+            pc.addTrack(newVideoTrack, localStreamRef.current);
+          }
+        });
+
+        socket.emit("user-media-state", { meetingId, email, isMuted, isCameraOff: false });
+      } catch (err) {
+        console.error("Could not acquire video:", err);
+        alert("Camera permission is required. Please allow camera access in your browser settings.");
+      }
+      return;
+    }
+
+    // Normal toggle — tracks exist, just enable/disable
     const nextCameraOff = !isCameraOff;
     videoTracks.forEach((t) => (t.enabled = !nextCameraOff));
     setIsCameraOff(nextCameraOff);
@@ -662,6 +800,13 @@ function Meeting() {
         setRecordingDuration(0);
 
         const blob = new Blob(recordedChunksRef.current, { type: "video/webm" });
+
+        // FIX: Store blob URL for in-app playback
+        const blobUrl = URL.createObjectURL(blob);
+        setRecordingBlobUrl(blobUrl);
+        setShowRecordingPlayer(true);
+
+        // Upload to server
         try {
           const response = await fetch(ENDPOINTS.MEETING_RECORDING(meetingId), {
             method: "POST",
@@ -674,20 +819,7 @@ function Meeting() {
           if (!response.ok) throw new Error("Recording upload failed");
         } catch (error) {
           console.error("Recording upload error:", error);
-          alert("Recording could not be saved to the server. A local download is still available.");
         }
-
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.style.display = "none";
-        a.href = url;
-        a.download = `NexusMeet-Recording-${meetingId}.webm`;
-        document.body.appendChild(a);
-        a.click();
-        setTimeout(() => {
-          document.body.removeChild(a);
-          window.URL.revokeObjectURL(url);
-        }, 100);
       };
 
       mediaRecorder.start(1000);
@@ -697,6 +829,10 @@ function Meeting() {
         setRecordingDuration((prev) => prev + 1);
       }, 1000);
 
+      // Handle user stopping screen share via browser
+      displayStream.getVideoTracks()[0].onended = () => {
+        stopRecording();
+      };
     } catch (err) {
       console.error("Recording start error:", err);
     }
@@ -705,6 +841,48 @@ function Meeting() {
   const stopRecording = () => {
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
       mediaRecorderRef.current.stop();
+      // Stop the display stream tracks
+      if (mediaRecorderRef.current.stream) {
+        mediaRecorderRef.current.stream.getTracks().forEach((t) => t.stop());
+      }
+    }
+  };
+
+  // FIX: Download recording from blob
+  const downloadRecordingBlob = () => {
+    if (!recordingBlobUrl) return;
+    const a = document.createElement("a");
+    a.style.display = "none";
+    a.href = recordingBlobUrl;
+    a.download = `GenzMeet-Recording-${meetingId}-${Date.now()}.webm`;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+      document.body.removeChild(a);
+    }, 100);
+  };
+
+  // FIX: Share recording via Web Share API
+  const shareRecording = async () => {
+    if (navigator.share) {
+      try {
+        const blob = await fetch(recordingBlobUrl).then((r) => r.blob());
+        const file = new File([blob], `GenzMeet-Recording-${meetingId}.webm`, { type: "video/webm" });
+        await navigator.share({
+          title: `Meeting Recording - ${meetingId}`,
+          text: `Recording from Genzis-Meet session ${meetingId}`,
+          files: [file]
+        });
+      } catch (err) {
+        // Fallback: copy link
+        if (err.name !== "AbortError") {
+          navigator.clipboard.writeText(window.location.href);
+          alert("Link copied to clipboard! Share the meeting link with your recording.");
+        }
+      }
+    } else {
+      navigator.clipboard.writeText(window.location.href);
+      alert("Link copied to clipboard!");
     }
   };
 
@@ -738,37 +916,51 @@ function Meeting() {
   };
 
   const totalTiles = 1 + Object.keys(remoteStreams).length;
+  // FIX: Improved grid layout with mobile breakpoints
   const getGridClass = () => {
     if (totalTiles === 1) return "grid-cols-1 max-w-4xl mx-auto";
-    if (totalTiles === 2) return "grid-cols-1 md:grid-cols-2 max-w-6xl mx-auto";
-    if (totalTiles <= 4) return "grid-cols-2 max-w-6xl mx-auto";
-    return "grid-cols-2 lg:grid-cols-3 max-w-7xl mx-auto";
+    if (totalTiles === 2) return "grid-cols-1 sm:grid-cols-2 max-w-6xl mx-auto";
+    if (totalTiles <= 4) return "grid-cols-1 sm:grid-cols-2 max-w-6xl mx-auto";
+    if (totalTiles <= 6) return "grid-cols-2 lg:grid-cols-3 max-w-7xl mx-auto";
+    return "grid-cols-2 md:grid-cols-3 lg:grid-cols-4 max-w-7xl mx-auto";
   };
 
   return (
-    <div className="h-screen w-screen flex flex-col bg-[#202124] text-slate-100 overflow-hidden relative select-none font-sans">
-      {/* GOOGLE MEET TOP HEADER */}
-      <header className="h-16 px-6 bg-[#202124] border-b border-[#3c4043] flex items-center justify-between z-30 shrink-0">
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2 bg-[#2d2f31] border border-[#3c4043] px-3.5 py-1.5 rounded-xl">
-            <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping"></span>
-            <span className="font-mono font-bold text-sm text-[#8ab4f8] tracking-wider">
+    <div className="h-screen w-screen flex flex-col bg-[#1a1a2e] text-slate-100 overflow-hidden relative select-none font-sans">
+
+      {/* FIX: CONNECTING OVERLAY — prevents flicker on refresh */}
+      {isConnecting && (
+        <div className="absolute inset-0 z-[100] bg-[#1a1a2e] flex flex-col items-center justify-center gap-6">
+          <div className="w-16 h-16 border-4 border-[#8ab4f8]/30 border-t-[#8ab4f8] rounded-full animate-spin"></div>
+          <div className="text-center">
+            <h2 className="text-xl font-semibold text-white mb-2">Joining Meeting...</h2>
+            <p className="text-sm text-slate-400">Setting up your camera and microphone</p>
+          </div>
+        </div>
+      )}
+
+      {/* TOP HEADER */}
+      <header className="h-14 sm:h-16 px-3 sm:px-6 bg-[#16213e] border-b border-[#0f3460]/50 flex items-center justify-between z-30 shrink-0">
+        <div className="flex items-center gap-2 sm:gap-4 min-w-0">
+          <div className="flex items-center gap-2 bg-[#0f3460] border border-[#533483]/40 px-2.5 sm:px-3.5 py-1.5 rounded-xl min-w-0">
+            <span className="w-2 h-2 sm:w-2.5 sm:h-2.5 rounded-full bg-emerald-400 animate-pulse shrink-0"></span>
+            <span className="font-mono font-bold text-xs sm:text-sm text-[#8ab4f8] tracking-wider shrink-0">
               {meetingId}
             </span>
-              <span className="text-xs text-white max-w-[220px] truncate">{meetingTitle}</span>
+            <span className="text-[10px] sm:text-xs text-white max-w-[100px] sm:max-w-[220px] truncate hidden sm:inline">{meetingTitle}</span>
           </div>
 
           {/* Recording Badge */}
           {isRecording && (
-            <div className="flex items-center gap-2 px-3 py-1.5 bg-red-600/20 border border-red-500/40 text-red-400 text-xs font-mono font-bold rounded-xl animate-pulse">
-              <span className="w-2.5 h-2.5 rounded-full bg-red-500"></span>
+            <div className="flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-1.5 bg-red-600/20 border border-red-500/40 text-red-400 text-[10px] sm:text-xs font-mono font-bold rounded-xl animate-pulse shrink-0">
+              <span className="w-2 h-2 sm:w-2.5 sm:h-2.5 rounded-full bg-red-500"></span>
               <span>REC {formatDuration(recordingDuration)}</span>
             </div>
           )}
 
           {/* Privacy Shield Badge */}
           {isPrivacyMode && (
-            <div className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-500/20 border border-amber-500/40 text-amber-300 text-xs font-bold rounded-xl">
+            <div className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 bg-amber-500/20 border border-amber-500/40 text-amber-300 text-xs font-bold rounded-xl">
               <svg className="w-4 h-4 text-amber-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
               </svg>
@@ -777,37 +969,37 @@ function Meeting() {
           )}
         </div>
 
-        {/* Center Google Meet Title */}
+        {/* Center Title — hidden on mobile */}
         <div className="hidden md:flex items-center gap-2">
           <span className="font-bold text-white text-sm">genzis-meet</span>
           <span className="text-xs text-slate-500">•</span>
-          <span className="text-xs text-slate-400 font-medium">{participants.length} Active Users</span>
+          <span className="text-xs text-slate-400 font-medium">{participants.length} Active</span>
         </div>
 
-        {/* 1-Click Live Link Share Button */}
-        <div className="flex items-center gap-3">
+        {/* Share Button */}
+        <div className="flex items-center gap-2 sm:gap-3 shrink-0">
           <button
             onClick={copyLiveInviteLink}
-            className="px-4 py-2 bg-white hover:bg-slate-200 text-black font-semibold rounded-lg text-xs shadow-md transition-colors flex items-center gap-1.5 shrink-0"
+            className="px-2.5 sm:px-4 py-1.5 sm:py-2 bg-[#8ab4f8] hover:bg-[#aecbfa] text-[#1a1a2e] font-semibold rounded-lg text-[10px] sm:text-xs shadow-md transition-colors flex items-center gap-1.5"
           >
-            <svg className="w-4 h-4 text-black" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <svg className="w-3.5 h-3.5 sm:w-4 sm:h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
             </svg>
-            <span>{copiedText === "link" ? "Link Copied!" : "Copy Live Link"}</span>
+            <span className="hidden sm:inline">{copiedText === "link" ? "Copied!" : "Copy Link"}</span>
           </button>
         </div>
       </header>
 
       {/* MAIN MEETING CANVAS */}
       <div className="flex-1 flex overflow-hidden relative">
-        <main className="flex-1 p-6 overflow-y-auto flex items-center justify-center relative">
-          <div className={`w-full grid gap-4 ${getGridClass()} h-full max-h-[80vh]`}>
+        <main className="flex-1 p-2 sm:p-4 md:p-6 overflow-y-auto flex items-center justify-center relative">
+          <div className={`w-full grid gap-2 sm:gap-3 md:gap-4 ${getGridClass()} h-full max-h-[85vh] sm:max-h-[80vh] transition-all duration-300`}>
             {/* LOCAL USER TILE */}
-            <div className="relative group w-full h-full min-h-[220px] rounded-2xl overflow-hidden bg-[#202124] border border-[#3c4043] flex items-center justify-center transition-all">
+            <div className="relative group w-full h-full min-h-[140px] sm:min-h-[180px] md:min-h-[220px] rounded-xl sm:rounded-2xl overflow-hidden bg-[#16213e] border border-[#0f3460]/50 flex items-center justify-center transition-all">
               {/* Privacy Watermark Overlay */}
               {isPrivacyMode && (
                 <div className="absolute inset-0 pointer-events-none z-30 flex items-center justify-center opacity-30 select-none">
-                  <div className="rotate-[-25deg] text-center font-mono font-extrabold text-xs text-amber-300 uppercase tracking-widest bg-black/60 px-4 py-2 rounded-xl border border-amber-500/30">
+                  <div className="rotate-[-25deg] text-center font-mono font-extrabold text-[10px] sm:text-xs text-amber-300 uppercase tracking-widest bg-black/60 px-3 sm:px-4 py-2 rounded-xl border border-amber-500/30">
                     🔒 PRIVACY PROTECTED • {email} • DO NOT RECORD
                   </div>
                 </div>
@@ -815,26 +1007,26 @@ function Meeting() {
 
               {/* Hand Raised Badge */}
               {isHandRaised && (
-                <div className="absolute top-3 left-3 z-20 px-3 py-1 bg-amber-400 text-slate-950 font-extrabold text-xs rounded-full shadow-lg flex items-center gap-1.5 animate-bounce">
-                  <svg className="w-4 h-4 text-slate-950" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <div className="absolute top-2 sm:top-3 left-2 sm:left-3 z-20 px-2 sm:px-3 py-1 bg-amber-400 text-slate-950 font-extrabold text-[10px] sm:text-xs rounded-full shadow-lg flex items-center gap-1 sm:gap-1.5 animate-bounce">
+                  <svg className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-slate-950" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 11.5V14m0-2.5v-6a1.5 1.5 0 113 0m-3 6a1.5 1.5 0 00-3 0v2a7.5 7.5 0 0015 0v-5a1.5 1.5 0 00-3 0m-6-3V11m0-5.5a1.5 1.5 0 113 0m-3 0V11m3-5.5a1.5 1.5 0 113 0V11" />
                   </svg>
-                  <span>You Raised Hand</span>
+                  <span className="hidden sm:inline">You Raised Hand</span>
                 </div>
               )}
 
               {/* Mute Indicator */}
-              <div className="absolute top-3 right-3 z-20">
+              <div className="absolute top-2 sm:top-3 right-2 sm:right-3 z-20">
                 {isMuted ? (
-                  <span className="w-8 h-8 rounded-full bg-red-600/90 text-white flex items-center justify-center text-xs shadow-md backdrop-blur-md">
-                    <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <span className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-red-600/90 text-white flex items-center justify-center text-xs shadow-md backdrop-blur-md">
+                    <svg className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2" />
                     </svg>
                   </span>
                 ) : (
-                  <span className="w-8 h-8 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center justify-center text-xs backdrop-blur-md">
-                    <svg className="w-4 h-4 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <span className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center justify-center text-xs backdrop-blur-md">
+                    <svg className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
                     </svg>
                   </span>
@@ -848,28 +1040,28 @@ function Meeting() {
                 playsInline
                 muted
                 className={`w-full h-full object-cover transition-opacity duration-300 ${
-                  isCameraOff ? "opacity-0 absolute" : "opacity-100"
+                  isCameraOff && !isScreenSharing ? "opacity-0 absolute" : "opacity-100"
                 }`}
               />
 
               {/* Camera Disabled Fallback */}
-              {isCameraOff && (
-                <div className="flex flex-col items-center justify-center gap-3">
-                  <div className="w-20 h-20 rounded-full bg-gradient-to-tr from-indigo-600 to-cyan-500 text-white font-black text-3xl flex items-center justify-center shadow-xl glow-brand">
+              {isCameraOff && !isScreenSharing && (
+                <div className="flex flex-col items-center justify-center gap-2 sm:gap-3">
+                  <div className="w-14 h-14 sm:w-20 sm:h-20 rounded-full bg-gradient-to-tr from-[#533483] to-[#8ab4f8] text-white font-black text-2xl sm:text-3xl flex items-center justify-center shadow-xl">
                     {email.charAt(0).toUpperCase()}
                   </div>
-                  <span className="text-xs text-slate-400 font-medium">Your Camera is Off</span>
+                  <span className="text-[10px] sm:text-xs text-slate-400 font-medium">Your Camera is Off</span>
                 </div>
               )}
 
               {/* Info Overlay */}
-              <div className="absolute bottom-3 left-3 z-20 flex items-center gap-2 px-3 py-1.5 rounded-xl bg-black/70 backdrop-blur-md border border-white/10">
-                <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
-                <span className="text-xs font-semibold text-white">
-                  You ({email.split('@')[0]}) {isHost && <span className="ml-1 text-[10px] bg-purple-600 text-white px-2 py-0.5 rounded-md font-bold uppercase">Host</span>}
+              <div className="absolute bottom-2 sm:bottom-3 left-2 sm:left-3 z-20 flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-1 sm:py-1.5 rounded-xl bg-black/70 backdrop-blur-md border border-white/10">
+                <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-emerald-400"></span>
+                <span className="text-[10px] sm:text-xs font-semibold text-white">
+                  You ({email.split('@')[0]}) {isHost && <span className="ml-1 text-[8px] sm:text-[10px] bg-[#533483] text-white px-1.5 sm:px-2 py-0.5 rounded-md font-bold uppercase">Host</span>}
                 </span>
                 {isScreenSharing && (
-                  <span className="text-[10px] bg-[#8ab4f8] text-[#202124] px-2 py-0.5 rounded-md font-bold uppercase">
+                  <span className="text-[8px] sm:text-[10px] bg-[#8ab4f8] text-[#1a1a2e] px-1.5 sm:px-2 py-0.5 rounded-md font-bold uppercase">
                     Presenting
                   </span>
                 )}
@@ -896,21 +1088,21 @@ function Meeting() {
           {/* FLOATING EMOJI REACTION ANIMATION OVERLAY */}
           <div className="absolute bottom-24 left-1/2 -translate-x-1/2 pointer-events-none z-40 flex flex-col items-center gap-2">
             {floatingReactions.map((r) => (
-              <div key={r.id} className="animate-float-reaction flex items-center gap-2 px-4 py-2 rounded-full bg-[#202124]/90 border border-[#3c4043] shadow-2xl">
-                <span className="text-2xl">{r.emoji}</span>
-                <span className="text-xs font-bold text-slate-200">{r.senderEmail.split('@')[0]}</span>
+              <div key={r.id} className="animate-float-reaction flex items-center gap-2 px-3 sm:px-4 py-2 rounded-full bg-[#1a1a2e]/90 border border-[#0f3460] shadow-2xl">
+                <span className="text-xl sm:text-2xl">{r.emoji}</span>
+                <span className="text-[10px] sm:text-xs font-bold text-slate-200">{r.senderEmail.split('@')[0]}</span>
               </div>
             ))}
           </div>
           {currentSubtitle && (
-            <div className="absolute bottom-8 left-1/2 -translate-x-1/2 z-30 max-w-[80%] px-5 py-2 rounded-xl bg-black/75 text-white text-sm text-center shadow-xl">
+            <div className="absolute bottom-6 sm:bottom-8 left-1/2 -translate-x-1/2 z-30 max-w-[90%] sm:max-w-[80%] px-4 sm:px-5 py-2 rounded-xl bg-black/75 text-white text-xs sm:text-sm text-center shadow-xl">
               <strong>{currentSubtitle.email?.split("@")[0]}:</strong> {currentSubtitle.text}
             </div>
           )}
         </main>
 
-        {/* SIDE DRAWER: IN-CALL CHAT */}
-        <div className={`absolute top-0 right-0 bottom-0 z-40 w-full md:w-80 transition-all duration-200 ${showChat ? "translate-x-0 opacity-100 pointer-events-auto" : "translate-x-full opacity-0 pointer-events-none"}`}>
+        {/* SIDE DRAWER: IN-CALL CHAT — FIX: Full screen on mobile */}
+        <div className={`absolute top-0 right-0 bottom-0 z-40 w-full sm:w-80 transition-all duration-200 ${showChat ? "translate-x-0 opacity-100 pointer-events-auto" : "translate-x-full opacity-0 pointer-events-none"}`}>
           <Chat
             meetingId={meetingId}
             email={email}
@@ -922,10 +1114,10 @@ function Meeting() {
 
         {/* SIDE DRAWER: PARTICIPANTS */}
         {showParticipants && (
-          <div className="w-80 h-full bg-[#202124] border-l border-[#3c4043] p-4 z-40 flex flex-col text-slate-100">
-            <div className="flex items-center justify-between pb-4 mb-4 border-b border-[#3c4043]">
+          <div className="absolute top-0 right-0 bottom-0 z-40 w-full sm:w-80 h-full bg-[#16213e] border-l border-[#0f3460]/50 p-4 flex flex-col text-slate-100">
+            <div className="flex items-center justify-between pb-4 mb-4 border-b border-[#0f3460]/50">
               <h3 className="font-bold text-white text-base">People ({participants.length})</h3>
-              <button onClick={() => setShowParticipants(false)} className="text-slate-400 hover:text-white">✕</button>
+              <button onClick={() => setShowParticipants(false)} className="text-slate-400 hover:text-white p-1">✕</button>
             </div>
 
             <div className="flex-1 overflow-y-auto space-y-3">
@@ -933,20 +1125,20 @@ function Meeting() {
                 const rState = remoteStates[u.socketId] || {};
                 const isSelf = u.email === email;
                 return (
-                  <div key={u.socketId} className="p-3 rounded-xl bg-[#2d2f31] border border-[#3c4043] flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <div className="w-8 h-8 rounded-full bg-indigo-600/30 text-indigo-300 font-bold text-xs flex items-center justify-center border border-indigo-500/30">
+                  <div key={u.socketId} className="p-3 rounded-xl bg-[#1a1a2e] border border-[#0f3460]/50 flex items-center justify-between">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="w-8 h-8 rounded-full bg-[#533483]/30 text-[#8ab4f8] font-bold text-xs flex items-center justify-center border border-[#533483]/30 shrink-0">
                         {u.email.charAt(0).toUpperCase()}
                       </div>
-                      <div>
-                        <p className="text-xs font-bold text-slate-200">
+                      <div className="min-w-0">
+                        <p className="text-xs font-bold text-slate-200 truncate">
                           {u.email} {isSelf && "(You)"}
                         </p>
                         <p className="text-[10px] text-slate-400">In Call</p>
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-1.5">
+                    <div className="flex items-center gap-1.5 shrink-0">
                       {rState.isHandRaised && (
                         <svg className="w-4 h-4 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 11.5V14m0-2.5v-6a1.5 1.5 0 113 0m-3 6a1.5 1.5 0 00-3 0v2a7.5 7.5 0 0015 0v-5a1.5 1.5 0 00-3 0m-6-3V11m0-5.5a1.5 1.5 0 113 0m-3 0V11m3-5.5a1.5 1.5 0 113 0V11" />
@@ -971,13 +1163,13 @@ function Meeting() {
         )}
       </div>
 
-      {/* GOOGLE MEET CENTERED FLOATING PILL CONTROL BAR */}
-      <footer className="h-20 bg-[#202124] border-t border-[#3c4043] px-6 flex items-center justify-between z-30 shrink-0 relative">
+      {/* FIX: RESPONSIVE CONTROL BAR — scrollable on mobile */}
+      <footer className="h-16 sm:h-20 bg-[#16213e] border-t border-[#0f3460]/50 px-2 sm:px-6 flex items-center justify-between z-30 shrink-0 relative">
         {/* Left Meeting Info */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1 sm:gap-2 shrink-0">
           <button
             onClick={() => setShowInfoModal(true)}
-            className="px-3.5 py-2 rounded-full bg-[#2d2f31] hover:bg-[#3c4043] border border-[#3c4043] text-xs font-semibold text-slate-200 flex items-center gap-2 transition-all"
+            className="p-2 sm:px-3.5 sm:py-2 rounded-full bg-[#0f3460] hover:bg-[#533483]/50 border border-[#533483]/30 text-xs font-semibold text-slate-200 flex items-center gap-1.5 sm:gap-2 transition-all"
           >
             <svg className="w-4 h-4 text-slate-200" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -986,23 +1178,23 @@ function Meeting() {
           </button>
         </div>
 
-        {/* CENTER GOOGLE MEET CONTROLS */}
-        <div className="flex items-center gap-3">
+        {/* CENTER CONTROLS — FIX: Horizontally scrollable on mobile */}
+        <div className="flex items-center gap-1.5 sm:gap-3 overflow-x-auto no-scrollbar px-1 sm:px-0 max-w-[60vw] sm:max-w-none">
           {/* Mute Mic */}
           <button
             onClick={toggleMicrophone}
-            className={`w-12 h-12 rounded-full flex items-center justify-center transition-all duration-200 shadow-md ${
-              isMuted ? "bg-red-600 text-white" : "bg-[#3c4043] hover:bg-slate-600 text-slate-100"
+            className={`w-10 h-10 sm:w-12 sm:h-12 rounded-full flex items-center justify-center transition-all duration-200 shadow-md shrink-0 ${
+              isMuted ? "bg-red-600 text-white" : "bg-[#0f3460] hover:bg-[#533483]/50 text-slate-100"
             }`}
             title={isMuted ? "Unmute Mic" : "Mute Mic"}
           >
             {isMuted ? (
-              <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <svg className="w-4.5 h-4.5 sm:w-5 sm:h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2" />
               </svg>
             ) : (
-              <svg className="w-5 h-5 text-slate-100" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <svg className="w-4.5 h-4.5 sm:w-5 sm:h-5 text-slate-100" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
               </svg>
             )}
@@ -1011,17 +1203,17 @@ function Meeting() {
           {/* Camera On/Off */}
           <button
             onClick={toggleCamera}
-            className={`w-12 h-12 rounded-full flex items-center justify-center transition-all duration-200 shadow-md ${
-              isCameraOff ? "bg-red-600 text-white" : "bg-[#3c4043] hover:bg-slate-600 text-slate-100"
+            className={`w-10 h-10 sm:w-12 sm:h-12 rounded-full flex items-center justify-center transition-all duration-200 shadow-md shrink-0 ${
+              isCameraOff ? "bg-red-600 text-white" : "bg-[#0f3460] hover:bg-[#533483]/50 text-slate-100"
             }`}
             title={isCameraOff ? "Turn Camera On" : "Turn Camera Off"}
           >
             {isCameraOff ? (
-              <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <svg className="w-4.5 h-4.5 sm:w-5 sm:h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
               </svg>
             ) : (
-              <svg className="w-5 h-5 text-slate-100" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <svg className="w-4.5 h-4.5 sm:w-5 sm:h-5 text-slate-100" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
               </svg>
             )}
@@ -1030,8 +1222,8 @@ function Meeting() {
           {/* Screen Share */}
           <button
             onClick={toggleScreenShare}
-            className={`w-12 h-12 rounded-full flex items-center justify-center transition-all duration-200 shadow-md ${
-              isScreenSharing ? "bg-[#8ab4f8] text-[#202124]" : "bg-[#3c4043] hover:bg-slate-600 text-slate-100"
+            className={`w-10 h-10 sm:w-12 sm:h-12 rounded-full flex items-center justify-center transition-all duration-200 shadow-md shrink-0 hidden sm:flex ${
+              isScreenSharing ? "bg-[#8ab4f8] text-[#1a1a2e]" : "bg-[#0f3460] hover:bg-[#533483]/50 text-slate-100"
             }`}
             title="Present Screen"
           >
@@ -1043,35 +1235,35 @@ function Meeting() {
           {/* Raise Hand */}
           <button
             onClick={toggleRaiseHand}
-            className={`w-12 h-12 rounded-full flex items-center justify-center transition-all duration-200 shadow-md ${
-              isHandRaised ? "bg-amber-400 text-slate-950 font-bold" : "bg-[#3c4043] hover:bg-slate-600 text-slate-100"
+            className={`w-10 h-10 sm:w-12 sm:h-12 rounded-full flex items-center justify-center transition-all duration-200 shadow-md shrink-0 ${
+              isHandRaised ? "bg-amber-400 text-slate-950 font-bold" : "bg-[#0f3460] hover:bg-[#533483]/50 text-slate-100"
             }`}
             title="Raise Hand"
           >
-            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <svg className="w-4.5 h-4.5 sm:w-5 sm:h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 11.5V14m0-2.5v-6a1.5 1.5 0 113 0m-3 6a1.5 1.5 0 00-3 0v2a7.5 7.5 0 0015 0v-5a1.5 1.5 0 00-3 0m-6-3V11m0-5.5a1.5 1.5 0 113 0m-3 0V11m3-5.5a1.5 1.5 0 113 0V11" />
             </svg>
           </button>
 
-          {/* Emoji Reactions Trigger */}
-          <div className="relative">
+          {/* Emoji Reactions */}
+          <div className="relative shrink-0">
             <button
               onClick={() => setShowReactionsMenu(!showReactionsMenu)}
-              className="w-12 h-12 rounded-full bg-[#3c4043] hover:bg-slate-600 text-slate-100 flex items-center justify-center transition-all shadow-md"
+              className="w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-[#0f3460] hover:bg-[#533483]/50 text-slate-100 flex items-center justify-center transition-all shadow-md"
               title="Send Reaction"
             >
-              <svg className="w-5 h-5 text-slate-100" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <svg className="w-4.5 h-4.5 sm:w-5 sm:h-5 text-slate-100" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.828 14.828a4 4 0 01-5.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
             </button>
 
             {showReactionsMenu && (
-              <div className="absolute bottom-16 left-1/2 -translate-x-1/2 bg-[#2d2f31] border border-[#3c4043] p-2 rounded-2xl shadow-2xl flex gap-2 z-50">
+              <div className="absolute bottom-14 sm:bottom-16 left-1/2 -translate-x-1/2 bg-[#16213e] border border-[#0f3460] p-2 rounded-2xl shadow-2xl flex gap-1.5 sm:gap-2 z-50">
                 {["❤️", "👏", "👍", "🔥", "🎉"].map((emoji) => (
                   <button
                     key={emoji}
                     onClick={() => sendEmojiReaction(emoji)}
-                    className="p-2 hover:scale-125 transition-transform text-xl"
+                    className="p-1.5 sm:p-2 hover:scale-125 transition-transform text-lg sm:text-xl"
                   >
                     {emoji}
                   </button>
@@ -1080,13 +1272,13 @@ function Meeting() {
             )}
           </div>
 
-          {/* Record Lecture Button */}
+          {/* Record Button */}
           <button
             onClick={isRecording ? stopRecording : startRecording}
-            className={`w-12 h-12 rounded-full flex items-center justify-center transition-all duration-200 shadow-md ${
-              isRecording ? "bg-red-600 text-white animate-pulse" : isPrivacyMode && !isHost ? "bg-gray-700 text-gray-400 cursor-not-allowed opacity-50" : "bg-[#3c4043] hover:bg-slate-600 text-slate-100"
+            className={`w-10 h-10 sm:w-12 sm:h-12 rounded-full flex items-center justify-center transition-all duration-200 shadow-md shrink-0 hidden sm:flex ${
+              isRecording ? "bg-red-600 text-white animate-pulse" : isPrivacyMode && !isHost ? "bg-gray-700 text-gray-400 cursor-not-allowed opacity-50" : "bg-[#0f3460] hover:bg-[#533483]/50 text-slate-100"
             }`}
-            title={isPrivacyMode && !isHost ? "Recording blocked by Host Privacy Shield" : isRecording ? "Stop Recording" : "Record Lecture"}
+            title={isPrivacyMode && !isHost ? "Recording blocked" : isRecording ? "Stop Recording" : "Record"}
           >
             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <circle cx="12" cy="12" r="5" fill="currentColor" />
@@ -1094,11 +1286,11 @@ function Meeting() {
             </svg>
           </button>
 
-          {/* Privacy Shield Toggle Button */}
+          {/* Privacy Shield — hidden on mobile */}
           <button
             onClick={togglePrivacyShield}
-            className={`w-12 h-12 rounded-full flex items-center justify-center transition-all duration-200 shadow-md ${
-              isPrivacyMode ? "bg-amber-500 text-slate-950" : "bg-[#3c4043] hover:bg-slate-600 text-slate-100"
+            className={`w-10 h-10 sm:w-12 sm:h-12 rounded-full flex items-center justify-center transition-all duration-200 shadow-md shrink-0 hidden lg:flex ${
+              isPrivacyMode ? "bg-amber-500 text-slate-950" : "bg-[#0f3460] hover:bg-[#533483]/50 text-slate-100"
             } ${!isHost ? "opacity-60 cursor-not-allowed" : ""}`}
             title={!isHost ? "Only host can toggle Privacy Shield" : isPrivacyMode ? "Disable Privacy Shield" : "Enable Privacy Shield"}
           >
@@ -1107,11 +1299,11 @@ function Meeting() {
             </svg>
           </button>
 
-          {/* Floating Screen (Picture-in-Picture) */}
+          {/* PiP — hidden on small screens */}
           <button
             onClick={togglePictureInPicture}
-            className="w-12 h-12 rounded-full bg-[#3c4043] hover:bg-slate-600 text-slate-100 flex items-center justify-center transition-all shadow-md"
-            title="Floating Screen (Picture-in-Picture when switching tabs)"
+            className="w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-[#0f3460] hover:bg-[#533483]/50 text-slate-100 flex items-center justify-center transition-all shadow-md shrink-0 hidden lg:flex"
+            title="Picture-in-Picture"
           >
             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
@@ -1120,15 +1312,15 @@ function Meeting() {
         </div>
 
         {/* Right Drawer Triggers & End Call */}
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-1.5 sm:gap-3 shrink-0">
           {/* People Drawer */}
           <button
             onClick={() => {
               setShowParticipants(!showParticipants);
               if (showChat) setShowChat(false);
             }}
-            className={`px-3.5 py-2 rounded-full text-xs font-semibold border transition-all flex items-center gap-2 ${
-              showParticipants ? "bg-[#8ab4f8] text-[#202124] border-[#8ab4f8]" : "bg-[#2d2f31] hover:bg-[#3c4043] border-[#3c4043] text-slate-200"
+            className={`p-2 sm:px-3.5 sm:py-2 rounded-full text-xs font-semibold border transition-all flex items-center gap-1.5 sm:gap-2 ${
+              showParticipants ? "bg-[#8ab4f8] text-[#1a1a2e] border-[#8ab4f8]" : "bg-[#0f3460] hover:bg-[#533483]/50 border-[#533483]/30 text-slate-200"
             }`}
           >
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -1143,8 +1335,8 @@ function Meeting() {
               setShowChat(!showChat);
               if (showParticipants) setShowParticipants(false);
             }}
-            className={`px-3.5 py-2 rounded-full text-xs font-semibold border transition-all flex items-center gap-2 ${
-              showChat ? "bg-[#8ab4f8] text-[#202124] border-[#8ab4f8]" : "bg-[#2d2f31] hover:bg-[#3c4043] border-[#3c4043] text-slate-200"
+            className={`p-2 sm:px-3.5 sm:py-2 rounded-full text-xs font-semibold border transition-all flex items-center gap-1.5 sm:gap-2 ${
+              showChat ? "bg-[#8ab4f8] text-[#1a1a2e] border-[#8ab4f8]" : "bg-[#0f3460] hover:bg-[#533483]/50 border-[#533483]/30 text-slate-200"
             }`}
           >
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -1153,34 +1345,34 @@ function Meeting() {
             <span className="hidden md:inline">Chat</span>
           </button>
 
-          {/* End Call / End Meeting for All Buttons */}
+          {/* End Call / End Meeting */}
           {isHost ? (
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1 sm:gap-2">
               <button
                 onClick={leaveMeeting}
-                className="px-3.5 py-2.5 rounded-xl bg-slate-700 hover:bg-slate-600 text-slate-200 font-bold text-xs shadow-lg transition-all"
-                title="Leave Meeting (Host leaves room)"
+                className="px-2 sm:px-3.5 py-2 sm:py-2.5 rounded-xl bg-slate-700 hover:bg-slate-600 text-slate-200 font-bold text-[10px] sm:text-xs shadow-lg transition-all hidden sm:block"
+                title="Leave Meeting"
               >
                 Leave
               </button>
               <button
                 onClick={endMeetingForEveryone}
-                className="px-4 py-2.5 rounded-xl bg-red-600 hover:bg-red-500 text-white font-extrabold text-xs shadow-lg transition-all flex items-center gap-1.5 animate-pulse"
-                title="End Meeting for All Participants"
+                className="px-2 sm:px-4 py-2 sm:py-2.5 rounded-xl bg-red-600 hover:bg-red-500 text-white font-extrabold text-[10px] sm:text-xs shadow-lg transition-all flex items-center gap-1 sm:gap-1.5"
+                title="End Meeting for All"
               >
-                <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <svg className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor" />
                 </svg>
-                <span className="hidden lg:inline">End Meeting</span>
+                <span className="hidden sm:inline">End</span>
               </button>
             </div>
           ) : (
             <button
               onClick={leaveMeeting}
-              className="w-14 h-11 rounded-full bg-red-600 hover:bg-red-500 text-white font-bold text-lg flex items-center justify-center shadow-lg transition-all"
+              className="w-10 h-10 sm:w-14 sm:h-11 rounded-full bg-red-600 hover:bg-red-500 text-white font-bold text-lg flex items-center justify-center shadow-lg transition-all"
               title="Leave Call"
             >
-              <svg className="w-6 h-6 text-white rotate-[135deg]" fill="currentColor" viewBox="0 0 24 24">
+              <svg className="w-5 h-5 sm:w-6 sm:h-6 text-white rotate-[135deg]" fill="currentColor" viewBox="0 0 24 24">
                 <path d="M6.62 10.79c1.44 2.83 3.76 5.14 6.59 6.59l2.2-2.2c.27-.27.67-.36 1.02-.24 1.12.37 2.33.57 3.57.57.55 0 1 .45 1 1V20c0 .55-.45 1-1 1-9.39 0-17-7.61-17-17 0-.55.45-1 1-1h3.5c.55 0 1 .45 1 1 0 1.25.2 2.45.57 3.57.11.35.03.74-.25 1.02l-2.2 2.2z"/>
               </svg>
             </button>
@@ -1191,13 +1383,13 @@ function Meeting() {
       {/* MEETING INFO MODAL */}
       {showInfoModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
-          <div className="w-full max-w-md bg-[#2d2f31] rounded-2xl p-6 relative border border-[#3c4043]">
+          <div className="w-full max-w-md bg-[#16213e] rounded-2xl p-6 relative border border-[#0f3460]">
             <button onClick={() => setShowInfoModal(false)} className="absolute top-4 right-4 text-slate-400 hover:text-white">✕</button>
 
             <h3 className="text-xl font-bold text-white mb-1">Joining info</h3>
             <p className="text-xs text-slate-400 mb-6">Share this live link to invite participants instantly</p>
 
-            <div className="space-y-4 bg-[#202124] p-4 rounded-xl border border-[#3c4043] mb-6">
+            <div className="space-y-4 bg-[#1a1a2e] p-4 rounded-xl border border-[#0f3460]/50 mb-6">
               <div>
                 <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Direct Live Invite Link</span>
                 <div className="flex items-center justify-between mt-1 gap-2">
@@ -1206,16 +1398,16 @@ function Meeting() {
                   </span>
                   <button
                     onClick={copyLiveInviteLink}
-                    className="text-xs px-3 py-1.5 bg-[#8ab4f8] text-[#202124] font-bold rounded-lg shrink-0"
+                    className="text-xs px-3 py-1.5 bg-[#8ab4f8] text-[#1a1a2e] font-bold rounded-lg shrink-0"
                   >
                     {copiedText === "link" ? "Copied!" : "Copy Link"}
                   </button>
                 </div>
               </div>
 
-              <div className="border-t border-[#3c4043] pt-3">
+              <div className="border-t border-[#0f3460]/50 pt-3">
                 <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Meeting ID</span>
-                <p className="font-mono font-bold text-indigo-300 text-base mt-0.5">{meetingId}</p>
+                <p className="font-mono font-bold text-[#8ab4f8] text-base mt-0.5">{meetingId}</p>
               </div>
             </div>
 
@@ -1226,10 +1418,61 @@ function Meeting() {
                   className="w-full py-3 bg-red-600 hover:bg-red-500 text-white font-bold rounded-xl text-xs shadow-lg transition-all border border-red-500/30 flex items-center justify-center gap-2"
                 >
                   <span>🛑</span>
-                  <span>End Meeting for All Participants</span>
+                  <span>End Meeting for All</span>
                 </button>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* FIX: RECORDING PLAYER MODAL — Play/Download/Share */}
+      {showRecordingPlayer && recordingBlobUrl && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/90 backdrop-blur-md">
+          <div className="w-full max-w-2xl bg-[#16213e] rounded-2xl p-6 relative border border-[#0f3460]">
+            <button
+              onClick={() => {
+                setShowRecordingPlayer(false);
+                URL.revokeObjectURL(recordingBlobUrl);
+                setRecordingBlobUrl(null);
+              }}
+              className="absolute top-4 right-4 text-slate-400 hover:text-white text-lg z-10"
+            >
+              ✕
+            </button>
+
+            <h3 className="text-xl font-bold text-white mb-1">🎬 Recording Ready</h3>
+            <p className="text-xs text-slate-400 mb-4">Your meeting recording has been saved. Play, download, or share it below.</p>
+
+            <div className="rounded-xl overflow-hidden bg-black mb-4">
+              <video
+                src={recordingBlobUrl}
+                controls
+                className="w-full max-h-[50vh] object-contain"
+                autoPlay={false}
+              />
+            </div>
+
+            <div className="flex flex-col sm:flex-row gap-3">
+              <button
+                onClick={downloadRecordingBlob}
+                className="flex-1 py-3 bg-[#8ab4f8] hover:bg-[#aecbfa] text-[#1a1a2e] font-bold rounded-xl text-sm flex items-center justify-center gap-2 transition-all"
+              >
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                </svg>
+                Download
+              </button>
+              <button
+                onClick={shareRecording}
+                className="flex-1 py-3 bg-[#533483] hover:bg-[#533483]/80 text-white font-bold rounded-xl text-sm flex items-center justify-center gap-2 transition-all"
+              >
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z" />
+                </svg>
+                Share
+              </button>
+            </div>
           </div>
         </div>
       )}

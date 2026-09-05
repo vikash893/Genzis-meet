@@ -13,6 +13,7 @@ function Chat({ meetingId, email, onClose, messages = [], onSendMessage }) {
 
   useEffect(() => {
     setConnected(socket.connected);
+
     const handleConnect = () => setConnected(true);
     const handleDisconnect = () => setConnected(false);
 
@@ -30,15 +31,14 @@ function Chat({ meetingId, email, onClose, messages = [], onSendMessage }) {
   }, [messages]);
 
   const sendMessage = (e) => {
-    if (e) e.preventDefault();
+    e?.preventDefault();
     const cleanMessage = message.trim();
     if (!cleanMessage) return;
 
-    const messageId = `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
     const chatMessage = {
-      id: messageId,
+      id: `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
       email: activeEmail,
-      meetingId: meetingId,
+      meetingId,
       message: cleanMessage,
       timestamp: new Date().toISOString()
     };
@@ -48,87 +48,86 @@ function Chat({ meetingId, email, onClose, messages = [], onSendMessage }) {
     } else {
       socket.emit("send-message", chatMessage);
     }
+
     setMessage("");
   };
 
-  const handleKeyDown = (e) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      sendMessage();
-    }
-  };
-
   const sendQuickEmoji = (emoji) => {
-    socket.emit("send-reaction", { meetingId, email, emoji });
+    socket.emit("send-reaction", { meetingId, email: activeEmail, emoji });
   };
 
   return (
-    <div className="w-full md:w-80 h-full flex flex-col bg-[#202124] border-l border-[#3c4043] text-slate-100 shadow-2xl relative select-none">
-      {/* GOOGLE MEET STYLE CHAT HEADER */}
-      <div className="p-4 border-b border-[#3c4043] flex items-center justify-between bg-[#2d2f31]">
-        <div className="flex items-center gap-2">
+    <div className="w-full sm:w-80 h-full flex flex-col bg-[#16213e] border-l border-[#0f3460]/50">
+      {/* Header */}
+      <div className="px-4 py-3 flex items-center justify-between border-b border-[#0f3460]/50 shrink-0">
+        <div className="flex items-center gap-2.5">
           <span className="text-lg">💬</span>
-          <h3 className="font-bold text-white text-base">In-call messages</h3>
+          <div>
+            <h3 className="text-sm font-bold text-white leading-tight">In-call messages</h3>
+            <div className="flex items-center gap-1.5 mt-0.5">
+              {connected ? (
+                <>
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                  <span className="text-[10px] text-emerald-400 font-semibold">Live</span>
+                </>
+              ) : (
+                <>
+                  <span className="w-1.5 h-1.5 rounded-full bg-red-400 animate-pulse"></span>
+                  <span className="text-[10px] text-red-400 font-semibold">Connecting...</span>
+                </>
+              )}
+            </div>
+          </div>
         </div>
 
-        <div className="flex items-center gap-3">
-          <span className={`px-2 py-0.5 text-[10px] font-bold rounded-full border ${
-            connected 
-              ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/30" 
-              : "bg-red-500/20 text-red-400 border-red-500/30"
-          }`}>
-            {connected ? "Live" : "Connecting..."}
-          </span>
-
-          {onClose && (
-            <button
-              onClick={onClose}
-              className="text-slate-400 hover:text-white text-lg p-1 rounded-lg hover:bg-slate-800 transition-colors"
-            >
-              ✕
-            </button>
-          )}
-        </div>
+        <button
+          onClick={onClose}
+          className="w-8 h-8 rounded-full bg-[#1a1a2e] hover:bg-[#0f3460] flex items-center justify-center transition-colors"
+        >
+          <span className="text-slate-400 hover:text-white text-sm">✕</span>
+        </button>
       </div>
 
-      <div className="px-4 py-2 bg-indigo-500/10 border-b border-[#3c4043] text-[11px] text-indigo-300">
-        Messages can be seen only by people in the call.
+      {/* Notice */}
+      <div className="px-4 py-2 bg-[#0f3460]/30 border-b border-[#0f3460]/30">
+        <p className="text-[10px] text-slate-400 leading-relaxed">Messages are visible to everyone in this call and persist until the host ends the meeting.</p>
       </div>
 
-      {/* MESSAGES LIST */}
-      <div className="flex-1 p-4 overflow-y-auto space-y-4">
+      {/* Messages */}
+      <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
         {messages.length === 0 ? (
-          <div className="h-full flex flex-col items-center justify-center text-center text-slate-500 py-10">
-            <span className="text-3xl mb-2">💬</span>
-            <p className="text-xs font-semibold">No in-call messages yet</p>
-            <p className="text-[11px] text-slate-500 mt-1">Send a message to everyone in this call</p>
+          <div className="flex flex-col items-center justify-center h-full text-center gap-3 py-8">
+            <div className="w-14 h-14 rounded-full bg-[#0f3460] flex items-center justify-center">
+              <span className="text-2xl">💬</span>
+            </div>
+            <div>
+              <p className="text-sm font-medium text-slate-300">No messages yet</p>
+              <p className="text-[10px] text-slate-500 mt-1">Start the conversation</p>
+            </div>
           </div>
         ) : (
-          messages.map((item) => {
-            const isMe = item.email === email;
+          messages.map((item, idx) => {
+            const isMine = item.email === activeEmail;
             return (
               <div
-                key={item.id}
-                className={`flex flex-col ${isMe ? "items-end" : "items-start"}`}
+                key={item.id || idx}
+                className={`flex flex-col ${isMine ? "items-end" : "items-start"}`}
               >
-                <div className="flex items-center gap-1.5 mb-1">
-                  <span className="text-[10px] font-bold text-slate-400">
-                    {isMe ? "You" : item.email.split('@')[0]}
-                  </span>
-                  <span className="text-[9px] text-slate-500">
-                    {new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                  </span>
-                </div>
-
+                <span className="text-[10px] text-slate-500 mb-0.5 px-1 font-medium">
+                  {isMine ? "You" : item.email?.split("@")[0]}
+                </span>
                 <div
-                  className={`px-3.5 py-2.5 rounded-2xl max-w-[85%] text-xs font-medium leading-relaxed break-words shadow-md ${
-                    isMe
-                      ? "bg-[#8ab4f8] text-[#202124] rounded-tr-none font-semibold"
-                      : "bg-[#3c4043] text-slate-100 rounded-tl-none"
+                  className={`max-w-[85%] px-3.5 py-2.5 rounded-2xl text-sm leading-relaxed shadow-sm ${
+                    isMine
+                      ? "bg-[#8ab4f8] text-[#1a1a2e] rounded-tr-sm font-medium"
+                      : "bg-[#0f3460] text-slate-100 rounded-tl-sm border border-[#533483]/20"
                   }`}
                 >
                   {item.message}
                 </div>
+                <span className="text-[9px] text-slate-600 mt-0.5 px-1">
+                  {item.timestamp ? new Date(item.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}
+                </span>
               </div>
             );
           })
@@ -136,37 +135,42 @@ function Chat({ meetingId, email, onClose, messages = [], onSendMessage }) {
         <div ref={messagesEndRef} />
       </div>
 
-      {/* QUICK EMOJI BAR */}
-      <div className="px-4 py-2 bg-[#2d2f31] border-t border-[#3c4043] flex items-center justify-around">
+      {/* Quick Reactions */}
+      <div className="px-4 py-2 border-t border-[#0f3460]/30 flex items-center gap-1.5 shrink-0">
+        <span className="text-[10px] text-slate-500 mr-1">Quick:</span>
         {["❤️", "👏", "👍", "🔥", "🎉"].map((emoji) => (
           <button
             key={emoji}
             onClick={() => sendQuickEmoji(emoji)}
-            className="hover:scale-125 transition-transform text-base p-1"
-            title={`Send ${emoji} reaction`}
+            className="p-1 hover:scale-125 transition-transform text-base"
           >
             {emoji}
           </button>
         ))}
       </div>
 
-      {/* INPUT FORM */}
-      <form onSubmit={sendMessage} className="p-3 border-t border-[#3c4043] bg-[#2d2f31] flex gap-2">
+      {/* Input */}
+      <form onSubmit={sendMessage} className="px-3 py-3 border-t border-[#0f3460]/50 flex items-center gap-2 shrink-0 bg-[#1a1a2e]">
         <input
           type="text"
-          placeholder="Send a message to everyone..."
+          placeholder="Send a message..."
           value={message}
           onChange={(e) => setMessage(e.target.value)}
-          onKeyDown={handleKeyDown}
-          className="flex-1 px-3.5 py-2.5 rounded-full bg-[#202124] border border-[#3c4043] text-white placeholder-slate-500 text-xs focus:outline-none focus:border-[#8ab4f8]"
+          onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) sendMessage(e); }}
+          className="flex-1 bg-[#0f3460] border border-[#533483]/30 rounded-xl px-4 py-2.5 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-[#8ab4f8]/50 transition-colors"
         />
-
         <button
           type="submit"
           disabled={!message.trim()}
-          className="px-4 py-2.5 bg-[#8ab4f8] hover:bg-blue-300 disabled:opacity-40 text-[#202124] rounded-full font-bold text-xs transition-all shrink-0"
+          className={`w-10 h-10 rounded-xl flex items-center justify-center transition-all ${
+            message.trim()
+              ? "bg-[#8ab4f8] text-[#1a1a2e] shadow-md hover:bg-[#aecbfa]"
+              : "bg-[#0f3460] text-slate-600 cursor-not-allowed"
+          }`}
         >
-          Send
+          <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+            <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
+          </svg>
         </button>
       </form>
     </div>

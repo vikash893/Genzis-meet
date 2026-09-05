@@ -20,5 +20,6 @@ export const ENDPOINTS = {
   MEETING_CANCEL: (meetingId) => `${API_BASE_URL}/meeting/${meetingId}`,
   MEETING_HISTORY: `${API_BASE_URL}/meeting/history`,
   MEETING_HISTORY_CSV: (meetingId) => `${API_BASE_URL}/meeting/history/${meetingId}.csv`,
-  MEETING_RECORDING: (meetingId) => `${API_BASE_URL}/meeting/${meetingId}/recording`
+  MEETING_RECORDING: (meetingId) => `${API_BASE_URL}/meeting/${meetingId}/recording`,
+  MEETING_RECORDING_STREAM: (meetingId) => `${API_BASE_URL}/meeting/${meetingId}/recording/stream`
 };
