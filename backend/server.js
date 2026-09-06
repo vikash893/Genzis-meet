@@ -455,19 +455,17 @@ io.on(
                 // Tell existing users new user joined
                 // ------------------------------------------
 
-                if (!alreadyJoined) {
-                    io.to(
-                        normalizedMeetingId
-                    ).emit(
-                        "user-joined",
-                        {
-                            socketId:
-                                socket.id,
-                            email:
-                                email
-                        }
-                    );
-                }
+                socket.to(
+                    normalizedMeetingId
+                ).emit(
+                    "user-joined",
+                    {
+                        socketId:
+                            socket.id,
+                        email:
+                            email
+                    }
+                );
 
             }
         );

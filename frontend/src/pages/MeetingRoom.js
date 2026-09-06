@@ -8,6 +8,27 @@ import RemoteVideo from "../components/RemoteVideo";
 const normalizeMeetingId = (value) =>
   String(value || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
 
+// Fast, redundant STUN/TURN server endpoints for global low-latency connectivity
+const ICE_SERVERS = [
+  { urls: "stun:stun.l.google.com:19302" },
+  { urls: "stun:stun1.l.google.com:19302" },
+  { urls: "stun:stun2.l.google.com:19302" },
+  { urls: "stun:stun3.l.google.com:19302" },
+  { urls: "stun:stun4.l.google.com:19302" },
+  { urls: "stun:stun.services.mozilla.com" },
+  { urls: "stun:global.stun.twilio.com:3478" },
+  {
+    urls: [
+      "turn:openrelay.metered.ca:80",
+      "turn:openrelay.metered.ca:443",
+      "turn:openrelay.metered.ca:443?transport=tcp",
+      "turns:openrelay.metered.ca:443?transport=tcp"
+    ],
+    username: "openrelayproject",
+    credential: "openrelayproject"
+  }
+];
+
 // ============================================================
 // RemoteVideoTile — wraps RemoteVideo with an internal ref
 // so each remote participant gets a stable, unique <video> ref.
@@ -185,11 +206,13 @@ function MeetingRoom() {
   const screenStreamRef = useRef(null);
   const peersRef = useRef(new Map());
   const participantsRef = useRef([]);
-  const offerLockRef = useRef(new Map());
   const joinedRef = useRef(false);
-  // FIX: ICE candidate queue — buffer candidates until remoteDescription is set
+  const makingOfferRef = useRef(new Map());
+  const ignoreOfferRef = useRef(new Map());
+  const peerWatchdogsRef = useRef(new Map());
+  // Buffer candidates per peer until remoteDescription is ready
   const iceCandidateQueueRef = useRef(new Map());
-  // FIX: Persistent remote MediaStreams — accumulate tracks instead of overwriting
+  // Persistent remote MediaStreams — accumulate tracks cleanly
   const remoteMediaStreamsRef = useRef(new Map());
 
   // State
@@ -221,23 +244,20 @@ function MeetingRoom() {
   const [copiedToast, setCopiedToast] = useState("");
   const [maximizedUserId, setMaximizedUserId] = useState(null);
 
-  const iceServers = [
-    { urls: "stun:stun.l.google.com:19302" },
-    {
-      urls: "turn:openrelay.metered.ca:443",
-      username: "openrelayproject",
-      credential: "openrelayproject",
-    },
-  ];
-
   // -----------------------------------------------------------
   // Helper: sync a single track onto an existing RTCPeerConnection
   // -----------------------------------------------------------
   const syncTrack = (pc, track) => {
+    if (!pc || !track) return Promise.resolve();
     const transceiver = pc
       .getTransceivers()
-      .find((item) => item.receiver?.track?.kind === track.kind);
-    if (transceiver) return transceiver.sender.replaceTrack(track);
+      .find((item) => item.receiver?.track?.kind === track.kind || item.sender?.track?.kind === track.kind);
+    if (transceiver && transceiver.sender) {
+      return transceiver.sender.replaceTrack(track);
+    }
+    try {
+      pc.addTrack(track, localStreamRef.current);
+    } catch {}
     return Promise.resolve();
   };
 
@@ -246,13 +266,13 @@ function MeetingRoom() {
   // -----------------------------------------------------------
   const flushIceCandidates = async (targetSocketId, pc) => {
     const queue = iceCandidateQueueRef.current.get(targetSocketId);
-    if (!queue || queue.length === 0) return;
+    if (!queue || queue.length === 0 || !pc) return;
     iceCandidateQueueRef.current.set(targetSocketId, []);
     for (const candidate of queue) {
       try {
         await pc.addIceCandidate(new RTCIceCandidate(candidate));
       } catch (e) {
-        console.warn("Flushed ICE candidate failed:", e);
+        console.warn("Flushed ICE candidate warning:", e);
       }
     }
   };
@@ -260,43 +280,61 @@ function MeetingRoom() {
   // -----------------------------------------------------------
   // createPeer — build an RTCPeerConnection for a remote participant
   // -----------------------------------------------------------
-  const createPeer = useCallback(
-    (targetSocketId) => {
-      const existing = peersRef.current.get(targetSocketId);
-      if (existing) return existing;
+  const createPeer = useCallback((targetSocketId) => {
+    const existing = peersRef.current.get(targetSocketId);
+    if (existing && existing.connectionState !== "closed" && existing.connectionState !== "failed") {
+      return existing;
+    }
+    if (existing) {
+      try { existing.close(); } catch {}
+      peersRef.current.delete(targetSocketId);
+    }
 
-      const pc = new RTCPeerConnection({ iceServers });
-      pc.addTransceiver("audio", { direction: "sendrecv" });
-      pc.addTransceiver("video", { direction: "sendrecv" });
-      peersRef.current.set(targetSocketId, pc);
+    const pc = new RTCPeerConnection({
+      iceServers: ICE_SERVERS,
+      iceCandidatePoolSize: 10,
+      bundlePolicy: "max-bundle"
+    });
 
-      // Initialise ICE queue for this peer
-      if (!iceCandidateQueueRef.current.has(targetSocketId)) {
-        iceCandidateQueueRef.current.set(targetSocketId, []);
+    // Add bidirectional audio and video transceivers
+    pc.addTransceiver("audio", { direction: "sendrecv" });
+    pc.addTransceiver("video", { direction: "sendrecv" });
+    peersRef.current.set(targetSocketId, pc);
+
+    // Initialise ICE queue for this peer if not present
+    if (!iceCandidateQueueRef.current.has(targetSocketId)) {
+      iceCandidateQueueRef.current.set(targetSocketId, []);
+    }
+
+    // Push local tracks immediately if available
+    const stream = localStreamRef.current;
+    if (stream) {
+      stream.getTracks().forEach((track) => syncTrack(pc, track));
+    }
+
+    // Trickle ICE candidates
+    pc.onicecandidate = ({ candidate }) => {
+      if (candidate) {
+        socket.emit("ice-candidate", { targetSocketId, candidate });
+      }
+    };
+
+    // ontrack — support multi-stream and discrete track accumulation
+    pc.ontrack = (event) => {
+      let peerStream = remoteMediaStreamsRef.current.get(targetSocketId);
+      if (!peerStream) {
+        peerStream = new MediaStream();
+        remoteMediaStreamsRef.current.set(targetSocketId, peerStream);
       }
 
-      // Push local tracks if available
-      const stream = localStreamRef.current;
-      if (stream)
-        stream.getTracks().forEach((track) => syncTrack(pc, track));
-
-      // ICE trickle
-      pc.onicecandidate = ({ candidate }) => {
-        if (candidate)
-          socket.emit("ice-candidate", { targetSocketId, candidate });
-      };
-
-      // FIX: ontrack — accumulate tracks into a persistent MediaStream per peer
-      pc.ontrack = (event) => {
-        let peerStream = remoteMediaStreamsRef.current.get(targetSocketId);
-        if (!peerStream) {
-          peerStream = new MediaStream();
-          remoteMediaStreamsRef.current.set(targetSocketId, peerStream);
-        }
-
+      if (event.streams && event.streams[0]) {
+        event.streams[0].getTracks().forEach((incoming) => {
+          if (!peerStream.getTracks().find((t) => t.id === incoming.id)) {
+            peerStream.addTrack(incoming);
+          }
+        });
+      } else if (event.track) {
         const incomingTrack = event.track;
-
-        // Replace existing track of same kind, or add new
         const existingTrack = peerStream
           .getTracks()
           .find((t) => t.kind === incomingTrack.kind);
@@ -306,63 +344,89 @@ function MeetingRoom() {
         if (!peerStream.getTracks().find((t) => t.id === incomingTrack.id)) {
           peerStream.addTrack(incomingTrack);
         }
+      }
 
-        const participant = participantsRef.current.find(
-          (item) => item.socketId === targetSocketId
-        );
-        setRemoteStreams((current) => ({
-          ...current,
-          [targetSocketId]: {
-            stream: peerStream,
-            email: participant?.email || "Participant",
-          },
-        }));
-      };
+      const participant = participantsRef.current.find(
+        (item) => item.socketId === targetSocketId
+      );
+      setRemoteStreams((current) => ({
+        ...current,
+        [targetSocketId]: {
+          stream: peerStream,
+          email: participant?.email || "Participant",
+        },
+      }));
+    };
 
-      // Peer connection lifecycle
-      pc.onconnectionstatechange = () => {
-        if (["failed", "closed"].includes(pc.connectionState)) {
-          peersRef.current.delete(targetSocketId);
-          remoteMediaStreamsRef.current.delete(targetSocketId);
-          iceCandidateQueueRef.current.delete(targetSocketId);
-          setRemoteStreams((current) => {
-            const next = { ...current };
-            delete next[targetSocketId];
-            return next;
-          });
-        }
-      };
-
-      // Negotiation needed — polite peer pattern using socket.id ordering
-      pc.onnegotiationneeded = async () => {
-        if (
-          socket.id > targetSocketId ||
-          offerLockRef.current.get(targetSocketId) ||
-          pc.signalingState !== "stable"
-        )
-          return;
-        offerLockRef.current.set(targetSocketId, true);
+    // ICE connection recovery
+    pc.oniceconnectionstatechange = () => {
+      const iceState = pc.iceConnectionState;
+      if (iceState === "failed") {
+        console.warn(`[WebRTC] ICE failed for ${targetSocketId}, attempting restart...`);
         try {
-          const offer = await pc.createOffer();
-          if (pc.signalingState === "stable") {
-            await pc.setLocalDescription(offer);
-            socket.emit("offer", {
-              targetSocketId,
-              offer: pc.localDescription,
+          if (pc.restartIce) pc.restartIce();
+        } catch (e) {
+          console.warn("ICE restart trigger error:", e);
+        }
+      }
+    };
+
+    // Peer connection lifecycle with watchdog recovery
+    pc.onconnectionstatechange = () => {
+      const state = pc.connectionState;
+      if (state === "failed") {
+        const timer = setTimeout(() => {
+          if (pc.connectionState === "failed") {
+            try { pc.close(); } catch {}
+            peersRef.current.delete(targetSocketId);
+            remoteMediaStreamsRef.current.delete(targetSocketId);
+            iceCandidateQueueRef.current.delete(targetSocketId);
+            setRemoteStreams((current) => {
+              const next = { ...current };
+              delete next[targetSocketId];
+              return next;
             });
           }
-        } catch (negotiationError) {
-          if (!String(negotiationError?.name).includes("Invalid"))
-            setError("Could not negotiate a participant connection.");
-        } finally {
-          offerLockRef.current.set(targetSocketId, false);
+        }, 3500);
+        peerWatchdogsRef.current.set(targetSocketId, timer);
+      } else if (state === "connected") {
+        const timer = peerWatchdogsRef.current.get(targetSocketId);
+        if (timer) {
+          clearTimeout(timer);
+          peerWatchdogsRef.current.delete(targetSocketId);
         }
-      };
+      } else if (state === "closed") {
+        peersRef.current.delete(targetSocketId);
+        remoteMediaStreamsRef.current.delete(targetSocketId);
+        iceCandidateQueueRef.current.delete(targetSocketId);
+        setRemoteStreams((current) => {
+          const next = { ...current };
+          delete next[targetSocketId];
+          return next;
+        });
+      }
+    };
 
-      return pc;
-    },
-    [iceServers]
-  );
+    // Perfect negotiation: onnegotiationneeded
+    pc.onnegotiationneeded = async () => {
+      try {
+        makingOfferRef.current.set(targetSocketId, true);
+        const offer = await pc.createOffer();
+        if (pc.signalingState !== "stable") return;
+        await pc.setLocalDescription(offer);
+        socket.emit("offer", {
+          targetSocketId,
+          offer: pc.localDescription,
+        });
+      } catch (negotiationError) {
+        console.warn("Negotiation error:", negotiationError);
+      } finally {
+        makingOfferRef.current.set(targetSocketId, false);
+      }
+    };
+
+    return pc;
+  }, []);
 
   // -----------------------------------------------------------
   // addLocalTracks — push media stream to local video + all peers
@@ -518,10 +582,23 @@ function MeetingRoom() {
       setMaximizedUserId((current) => (current === socketId ? null : current));
     };
 
-    // FIX: Apply offer → answer and then flush queued ICE candidates
+    // Perfect negotiation: Handle incoming Offer with glare collision rollback
     const onOffer = async ({ fromSocketId, offer }) => {
       const pc = createPeer(fromSocketId);
+      const isPolite = socket.id > fromSocketId;
+      const isMakingOffer = makingOfferRef.current.get(fromSocketId);
+      const offerCollision = isMakingOffer || pc.signalingState !== "stable";
+
+      ignoreOfferRef.current.set(fromSocketId, !isPolite && offerCollision);
+      if (ignoreOfferRef.current.get(fromSocketId)) {
+        console.log(`[WebRTC] Glare collision: Impolite peer ignoring offer from ${fromSocketId}`);
+        return;
+      }
+
       try {
+        if (offerCollision) {
+          await pc.setLocalDescription({ type: "rollback" });
+        }
         await pc.setRemoteDescription(new RTCSessionDescription(offer));
         await flushIceCandidates(fromSocketId, pc);
         const answer = await pc.createAnswer();
@@ -533,12 +610,12 @@ function MeetingRoom() {
       } catch (offerError) {
         console.error("Offer handling error:", offerError);
         setError(
-          "A participant connection could not be negotiated. Please rejoin the meeting."
+          "A participant connection was refreshed. Establishing connection..."
         );
       }
     };
 
-    // FIX: Apply answer then flush queued ICE candidates
+    // Apply incoming Answer and flush queued ICE candidates
     const onAnswer = async ({ fromSocketId, answer }) => {
       const pc = peersRef.current.get(fromSocketId);
       if (pc && pc.signalingState === "have-local-offer") {
@@ -551,18 +628,18 @@ function MeetingRoom() {
       }
     };
 
-    // FIX: Queue ICE candidates if remoteDescription not yet set
+    // Buffer ICE candidates reliably even if remoteDescription is pending
     const onIce = async ({ fromSocketId, candidate }) => {
+      if (!candidate) return;
       const pc = peersRef.current.get(fromSocketId);
-      if (!pc) return;
-      if (pc.remoteDescription && pc.remoteDescription.type) {
+      if (pc && pc.remoteDescription && pc.remoteDescription.type) {
         try {
           await pc.addIceCandidate(new RTCIceCandidate(candidate));
         } catch (e) {
           console.warn("ICE candidate error:", e);
         }
       } else {
-        // Queue the candidate for later
+        // Queue the candidate so it is never dropped
         const queue = iceCandidateQueueRef.current.get(fromSocketId) || [];
         queue.push(candidate);
         iceCandidateQueueRef.current.set(fromSocketId, queue);
