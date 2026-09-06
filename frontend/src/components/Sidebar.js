@@ -56,29 +56,31 @@ function Sidebar({ onThemeChange, theme: controlledTheme }) {
 
       {open && <button aria-label="Close dashboard navigation" onClick={() => setOpen(false)} className="fixed inset-0 z-40 bg-slate-950/60 lg:hidden" />}
 
-      <aside className={`fixed inset-y-0 left-0 z-50 flex w-72 flex-col border-r px-4 py-5 transition-transform duration-200 lg:translate-x-0 ${panelClass} ${open ? "translate-x-0" : "-translate-x-full"}`}>
-        <div className="flex items-center justify-between px-3">
-          <Link to="/dashboard" onClick={() => setOpen(false)} className="text-xl font-bold tracking-tight">genzis<span className={isLight ? "text-[#533483]" : "text-[#8ab4f8]"}>-meet</span></Link>
-          <button onClick={() => setOpen(false)} aria-label="Close dashboard navigation" className="rounded-lg p-2 text-slate-400 hover:bg-slate-500/10 lg:hidden">×</button>
-        </div>
-        <p className={`px-3 pt-1 text-[10px] uppercase tracking-[0.2em] ${isLight ? "text-slate-400" : "text-slate-500"}`}>Workspace</p>
-
-        <nav className="mt-8 space-y-1" aria-label="Dashboard navigation">
-          {links.map((link) => (
-            <Link key={link.path} to={link.path} onClick={() => setOpen(false)} className={`flex items-center gap-3 rounded-xl px-3 py-3 text-sm font-semibold transition-colors ${linkClass(link.path)}`}>
-              <svg className="h-5 w-5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d={link.icon} /></svg>
-              {link.label}
-            </Link>
-          ))}
-        </nav>
-
-        <div className={`mt-auto border-t pt-4 ${isLight ? "border-slate-200" : "border-[#0f3460]"}`}>
-          <div className="mb-4 flex items-center gap-3 px-3">
-            <div className={`flex h-9 w-9 items-center justify-center rounded-full text-sm font-bold ${isLight ? "bg-[#533483] text-white" : "bg-white text-black"}`}>{userEmail.charAt(0).toUpperCase()}</div>
-            <div className="min-w-0"><p className="truncate text-sm font-semibold">{userEmail}</p><p className={`text-[10px] uppercase tracking-wider ${isLight ? "text-slate-500" : "text-slate-400"}`}>{userRole}</p></div>
+      <aside className={`fixed inset-y-0 left-0 z-50 flex w-72 max-h-screen h-[100dvh] flex-col justify-between border-r px-3.5 py-4 transition-transform duration-200 overflow-y-auto no-scrollbar lg:translate-x-0 ${panelClass} ${open ? "translate-x-0" : "-translate-x-full"}`}>
+        <div>
+          <div className="flex items-center justify-between px-2.5">
+            <Link to="/dashboard" onClick={() => setOpen(false)} className="text-xl font-bold tracking-tight">genzis<span className={isLight ? "text-[#533483]" : "text-[#8ab4f8]"}>-meet</span></Link>
+            <button onClick={() => setOpen(false)} aria-label="Close dashboard navigation" className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-500/10 lg:hidden">×</button>
           </div>
-          <button onClick={toggleTheme} className={`mb-1 flex w-full items-center gap-3 rounded-xl px-3 py-3 text-sm font-semibold ${isLight ? "text-slate-600 hover:bg-slate-100" : "text-slate-400 hover:bg-[#0f3460]/50 hover:text-white"}`}><span className="w-5 text-center">{isLight ? "☾" : "☀"}</span>{isLight ? "Dark mode" : "Light mode"}</button>
-          <button onClick={logout} className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-sm font-semibold text-red-400 hover:bg-red-500/10"><span className="w-5 text-center">↪</span>Sign out</button>
+          <p className={`px-2.5 pt-0.5 text-[9px] uppercase tracking-[0.2em] font-semibold ${isLight ? "text-slate-400" : "text-slate-500"}`}>Workspace</p>
+
+          <nav className="mt-4 space-y-0.5" aria-label="Dashboard navigation">
+            {links.map((link) => (
+              <Link key={link.path} to={link.path} onClick={() => setOpen(false)} className={`flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold transition-colors ${linkClass(link.path)}`}>
+                <svg className="h-5 w-5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d={link.icon} /></svg>
+                {link.label}
+              </Link>
+            ))}
+          </nav>
+        </div>
+
+        <div className={`mt-4 border-t pt-3 ${isLight ? "border-slate-200" : "border-[#0f3460]"}`}>
+          <div className="mb-2.5 flex items-center gap-2.5 px-2">
+            <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-bold ${isLight ? "bg-[#533483] text-white" : "bg-white text-black"}`}>{userEmail.charAt(0).toUpperCase()}</div>
+            <div className="min-w-0"><p className="truncate text-xs font-semibold">{userEmail}</p><p className={`text-[9px] uppercase tracking-wider ${isLight ? "text-slate-500" : "text-slate-400"}`}>{userRole}</p></div>
+          </div>
+          <button onClick={toggleTheme} className={`mb-1 flex w-full items-center gap-3 rounded-xl px-3 py-2 text-xs font-semibold ${isLight ? "text-slate-600 hover:bg-slate-100" : "text-slate-400 hover:bg-[#0f3460]/50 hover:text-white"}`}><span className="w-4 text-center">{isLight ? "☾" : "☀"}</span>{isLight ? "Dark mode" : "Light mode"}</button>
+          <button onClick={logout} className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-xs font-semibold text-red-400 hover:bg-red-500/10"><span className="w-4 text-center">↪</span>Sign out</button>
         </div>
       </aside>
     </>

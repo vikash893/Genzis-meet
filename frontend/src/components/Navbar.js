@@ -78,34 +78,12 @@ function Navbar({ onThemeChange }) {
         </div>
       </div>
 
-      {/* Center Links */}
-      <div className={`nav-links hidden md:flex items-center gap-6 text-sm font-medium ${isLight ? "text-slate-600" : "text-slate-300"}`}>
-        <Link to="/" className={`transition-colors ${isActive("/") ? (isLight ? "text-[#533483] font-semibold" : "text-white font-semibold") : (isLight ? "hover:text-slate-900" : "hover:text-white")}`}>
-          Home
-        </Link>
-        <a href="/#features" className={isLight ? "hover:text-slate-900" : "hover:text-white"}>Features</a>
-        <a href="/#how-it-works" className={isLight ? "hover:text-slate-900" : "hover:text-white"}>How it works</a>
-        <a href="/#security" className={isLight ? "hover:text-slate-900" : "hover:text-white"}>Security</a>
-        {token && [
-          ["/dashboard", "Overview"],
-          ["/dashboard/meetings", "Meetings"],
-          ["/dashboard/history", "History"],
-          ["/dashboard/recordings", "Recordings"],
-          ["/dashboard/announcements", "Updates"],
-          ["/dashboard/settings", "Settings"]
-        ].map(([path, label]) => (
-          <Link key={path} to={path} className={`transition-colors ${isActive(path) ? (isLight ? "text-[#533483] font-semibold" : "text-white font-semibold") : (isLight ? "hover:text-slate-900" : "hover:text-white")}`}>
-            {label}
-          </Link>
-        ))}
-      </div>
-
       {/* Right Actions & Theme Toggle */}
       <div className="flex items-center gap-2 sm:gap-3">
         {/* Theme Toggle Button */}
         <button
           onClick={toggleTheme}
-          className={`p-2 rounded-xl border text-xs font-semibold flex items-center gap-1.5 transition-all shadow-sm ${
+          className={`p-2 rounded-xl border text-xs font-semibold flex items-center gap-1.5 transition-all shadow-sm active:scale-95 ${
             isLight
               ? "bg-slate-100 border-slate-300 text-slate-700 hover:bg-slate-200"
               : "bg-[#0f3460] border-[#533483]/30 text-slate-200 hover:bg-[#533483]/50"
@@ -142,12 +120,15 @@ function Navbar({ onThemeChange }) {
 
             {/* User Profile Pill */}
             <div className="flex items-center gap-2 sm:gap-3 sm:pl-2 sm:border-l sm:border-slate-700">
-              <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs shadow-md ${
-                isLight ? "bg-[#533483] text-white" : "bg-white text-black"
-              }`}>
+              <div 
+                onClick={() => navigate("/dashboard")}
+                className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs shadow-md cursor-pointer ${
+                  isLight ? "bg-[#533483] text-white" : "bg-white text-black"
+                }`}
+              >
                 {userEmail.charAt(0).toUpperCase()}
               </div>
-              <div className="hidden md:block text-left">
+              <div className="hidden md:block text-left cursor-pointer" onClick={() => navigate("/dashboard")}>
                 <p className={`text-xs font-semibold max-w-[120px] truncate ${isLight ? "text-slate-900" : "text-slate-200"}`}>{userEmail}</p>
                 <p className={`text-[10px] uppercase tracking-wider ${isLight ? "text-slate-500" : "text-slate-400"}`}>{userRole}</p>
               </div>
@@ -156,7 +137,7 @@ function Navbar({ onThemeChange }) {
               <button
                 onClick={handleLogout}
                 title="Sign Out"
-                className={`p-2 rounded-xl text-xs font-semibold transition-all ${
+                className={`p-2 rounded-xl text-xs font-semibold transition-all active:scale-95 ${
                   isLight ? "hover:bg-slate-100 text-slate-600 hover:text-red-600" : "hover:bg-[#0f3460] text-slate-400 hover:text-red-400"
                 }`}
               >
@@ -170,7 +151,7 @@ function Navbar({ onThemeChange }) {
           <div className="flex items-center gap-2">
             <button
               onClick={() => setShowLoginModal(true)}
-              className={`px-4 py-2 text-xs font-semibold rounded-xl transition-all ${
+              className={`px-4 py-2 text-xs font-semibold rounded-xl transition-all active:scale-95 ${
                 isLight ? "hover:bg-slate-100 text-slate-800" : "hover:bg-[#0f3460] text-white"
               }`}
             >
@@ -178,7 +159,7 @@ function Navbar({ onThemeChange }) {
             </button>
             <button
               onClick={() => setShowRegisterModal(true)}
-              className={`px-4 py-2 text-xs font-bold rounded-xl transition-all shadow-md ${
+              className={`px-4 py-2 text-xs font-bold rounded-xl transition-all shadow-md active:scale-95 ${
                 isLight ? "bg-[#533483] text-white hover:bg-[#533483]/90" : "bg-white text-black hover:bg-slate-200"
               }`}
             >
@@ -187,10 +168,11 @@ function Navbar({ onThemeChange }) {
           </div>
         )}
 
-        {/* Mobile Hamburger Toggle */}
+        {/* Mobile Toggle (when logged in or out) */}
         <button
           onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
           className="md:hidden p-2 rounded-xl text-slate-400 hover:text-white"
+          aria-label="Toggle navigation menu"
         >
           <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={mobileMenuOpen ? "M6 18L18 6M6 6l12 12" : "M4 6h16M4 12h16M4 18h16"} />
@@ -200,21 +182,14 @@ function Navbar({ onThemeChange }) {
 
       {/* Mobile Navigation Drawer */}
       {mobileMenuOpen && (
-        <div className={`absolute top-full left-0 right-0 p-4 border-b md:hidden shadow-2xl flex flex-col gap-3 z-50 ${
+        <div className={`absolute top-full left-0 right-0 p-4 border-b md:hidden shadow-2xl flex flex-col gap-2 z-50 ${
           isLight ? "bg-white border-slate-200 text-slate-900" : "bg-[#16213e] border-[#0f3460]"
         }`}>
-          <Link to="/" onClick={() => setMobileMenuOpen(false)} className="py-2 text-sm font-semibold">Home</Link>
-          <a href="/#features" onClick={() => setMobileMenuOpen(false)} className="py-2 text-sm font-semibold">Features</a>
-          <a href="/#how-it-works" onClick={() => setMobileMenuOpen(false)} className="py-2 text-sm font-semibold">How it works</a>
-          <a href="/#security" onClick={() => setMobileMenuOpen(false)} className="py-2 text-sm font-semibold">Security</a>
+          <Link to="/" onClick={() => setMobileMenuOpen(false)} className="py-2 px-3 text-sm font-semibold rounded-lg hover:bg-white/5">Home</Link>
           {token && (
             <>
-              <Link to="/dashboard" onClick={() => setMobileMenuOpen(false)} className="py-2 text-sm font-semibold">Overview</Link>
-              <Link to="/dashboard/meetings" onClick={() => setMobileMenuOpen(false)} className="py-2 text-sm font-semibold">Meetings</Link>
-              <Link to="/dashboard/history" onClick={() => setMobileMenuOpen(false)} className="py-2 text-sm font-semibold">History</Link>
-              <Link to="/dashboard/recordings" onClick={() => setMobileMenuOpen(false)} className="py-2 text-sm font-semibold">Recordings</Link>
-              <Link to="/dashboard/announcements" onClick={() => setMobileMenuOpen(false)} className="py-2 text-sm font-semibold">Updates</Link>
-              <Link to="/dashboard/settings" onClick={() => setMobileMenuOpen(false)} className="py-2 text-sm font-semibold">Settings</Link>
+              <Link to="/dashboard" onClick={() => setMobileMenuOpen(false)} className="py-2 px-3 text-sm font-semibold rounded-lg hover:bg-white/5">Dashboard</Link>
+              <button onClick={() => { setMobileMenuOpen(false); handleLogout(); }} className="py-2 px-3 text-left text-sm font-semibold text-red-400 hover:bg-red-500/10 rounded-lg">Sign out</button>
             </>
           )}
         </div>

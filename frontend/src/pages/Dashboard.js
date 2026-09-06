@@ -279,12 +279,12 @@ function Dashboard() {
   );
 
   return (
-    <div className={`min-h-screen flex flex-col font-sans transition-colors duration-300 ${
+    <div className={`min-h-screen font-sans overflow-x-hidden transition-colors duration-300 ${
       isLight ? "bg-slate-50 text-slate-900" : "bg-[#1a1a2e] text-[#e8eaed]"
     }`}>
       <Sidebar onThemeChange={handleThemeChange} />
 
-      <main className="flex-1 w-full px-4 pt-24 pb-6 sm:px-6 sm:pb-8 lg:ml-72 lg:px-10 lg:pt-8">
+      <main className="min-h-screen px-4 pt-20 pb-6 sm:px-6 sm:pb-8 lg:ml-72 lg:px-10 lg:pt-8 max-w-full overflow-x-hidden">
         {/* HERO WELCOME BANNER */}
         <div className={`mb-8 p-6 sm:p-8 rounded-3xl border shadow-xl transition-all ${
           isLight

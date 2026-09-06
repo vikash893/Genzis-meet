@@ -181,9 +181,9 @@ function DashboardFeaturePage({ feature }) {
   const inputClass = `w-full rounded-xl border px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-[#8ab4f8] ${isLight ? "bg-white border-slate-300 text-slate-900" : "bg-[#0f3460]/40 border-[#0f3460] text-white"}`;
 
   return (
-    <div className={`min-h-screen font-sans ${isLight ? "bg-slate-50 text-slate-900" : "bg-[#1a1a2e] text-[#e8eaed]"}`}>
+    <div className={`min-h-screen font-sans overflow-x-hidden ${isLight ? "bg-slate-50 text-slate-900" : "bg-[#1a1a2e] text-[#e8eaed]"}`}>
       <Sidebar theme={theme} onThemeChange={setTheme} />
-      <main className="min-h-screen px-4 pt-24 pb-8 sm:px-6 lg:ml-72 lg:px-10 lg:pt-10">
+      <main className="min-h-screen px-4 pt-20 pb-8 sm:px-6 lg:ml-72 lg:px-10 lg:pt-8 max-w-full overflow-x-hidden">
         <div className="mb-8 flex flex-col gap-2">
           <span className={`text-xs font-bold uppercase tracking-[0.2em] ${isLight ? "text-[#533483]" : "text-[#8ab4f8]"}`}>{config.eyebrow}</span>
           <h1 className="text-3xl font-bold tracking-tight sm:text-4xl">{config.title}</h1>
