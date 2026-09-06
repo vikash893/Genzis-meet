@@ -36,7 +36,7 @@ function Sidebar({ onThemeChange, theme: controlledTheme }) {
     localStorage.removeItem("token");
     localStorage.removeItem("userEmail");
     localStorage.removeItem("userRole");
-    navigate("/login");
+    navigate("/");
   };
 
   const panelClass = isLight ? "bg-white border-slate-200 text-slate-900" : "bg-[#121b35] border-[#0f3460]/70 text-slate-100";

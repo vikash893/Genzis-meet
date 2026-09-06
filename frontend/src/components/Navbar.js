@@ -31,7 +31,7 @@ function Navbar({ onThemeChange }) {
     localStorage.removeItem("token");
     localStorage.removeItem("userEmail");
     localStorage.removeItem("userRole");
-    navigate("/login");
+    navigate("/");
   };
 
   const openRegisterModal = () => {
