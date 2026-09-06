@@ -7,7 +7,10 @@ function RemoteVideo({
   isCameraOff = false,
   isHandRaised = false,
   isPrivacyMode = false,
-  networkQuality = "good" // "excellent" | "good" | "weak" | "poor" | "offline"
+  networkQuality = "good", // "excellent" | "good" | "weak" | "poor" | "offline"
+  isMain = false,
+  onClick,
+  isClickable = false,
 }) {
   const videoRef = useRef(null);
 
@@ -46,7 +49,16 @@ function RemoteVideo({
   const signal = getSignalBadge();
 
   return (
-    <div className="relative group w-full h-full min-h-[140px] sm:min-h-[180px] md:min-h-[220px] rounded-xl sm:rounded-2xl overflow-hidden bg-[#16213e] border border-[#0f3460]/50 flex items-center justify-center transition-all">
+    <div
+      onClick={onClick}
+      className={`relative group w-full h-full min-h-0 rounded-xl sm:rounded-2xl overflow-hidden bg-[#16213e] border flex items-center justify-center transition-all duration-200 ${
+        isClickable ? "cursor-pointer hover:border-[#8ab4f8]/70 hover:shadow-2xl" : ""
+      } ${
+        isMain
+          ? "border-white/10 shadow-xl"
+          : "border-[#0f3460]/50 hover:ring-2 hover:ring-[#8ab4f8]/50 shadow-md"
+      }`}
+    >
       {/* Privacy Mode Watermark */}
       {isPrivacyMode && (
         <div className="absolute inset-0 pointer-events-none z-30 flex items-center justify-center opacity-30 select-none">
@@ -76,6 +88,13 @@ function RemoteVideo({
         </div>
       )}
 
+      {/* Pinned Badge if Main */}
+      {isMain && !isHandRaised && (
+        <div className="absolute top-2 sm:top-3 left-2 sm:left-3 z-20 px-2 sm:px-2.5 py-1 bg-black/60 backdrop-blur-md text-[#8ab4f8] text-[10px] sm:text-xs rounded-lg border border-[#8ab4f8]/30 flex items-center gap-1">
+          <span>📌 Pinned</span>
+        </div>
+      )}
+
       {/* Top Right Controls: Network Quality & Audio Mute */}
       <div className="absolute top-2 sm:top-3 right-2 sm:right-3 z-20 flex items-center gap-1.5">
         {/* Network Signal Indicator */}
@@ -88,15 +107,15 @@ function RemoteVideo({
 
         {/* Mute Indicator */}
         {isMuted ? (
-          <span className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-red-600/90 text-white flex items-center justify-center text-xs shadow-md backdrop-blur-md">
-            <svg className="w-3.5 h-3.5 sm:w-4 sm:h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <span className="w-6 h-6 sm:w-8 sm:h-8 rounded-full bg-red-600/90 text-white flex items-center justify-center text-xs shadow-md backdrop-blur-md">
+            <svg className="w-3 h-3 sm:w-4 sm:h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2" />
             </svg>
           </span>
         ) : (
-          <span className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center justify-center text-xs backdrop-blur-md">
-            <svg className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <span className="w-6 h-6 sm:w-8 sm:h-8 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center justify-center text-xs backdrop-blur-md">
+            <svg className="w-3 h-3 sm:w-4 sm:h-4 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
             </svg>
           </span>
@@ -115,20 +134,29 @@ function RemoteVideo({
 
       {/* Camera Off Fallback */}
       {isCameraOff && (
-        <div className="flex flex-col items-center justify-center gap-2 sm:gap-3">
-          <div className="w-14 h-14 sm:w-20 sm:h-20 rounded-full bg-gradient-to-tr from-[#533483] to-[#8ab4f8] text-white font-black text-2xl sm:text-3xl flex items-center justify-center shadow-xl">
+        <div className="flex flex-col items-center justify-center gap-2 sm:gap-3 p-2">
+          <div className={`rounded-full bg-gradient-to-tr from-[#533483] to-[#8ab4f8] text-white font-black flex items-center justify-center shadow-xl ${
+            isMain ? "w-16 h-16 sm:w-20 sm:h-20 text-2xl sm:text-3xl" : "w-9 h-9 sm:w-11 sm:h-11 text-sm sm:text-base"
+          }`}>
             {initial}
           </div>
-          <span className="text-[10px] sm:text-xs text-slate-400 font-medium">Camera Turned Off</span>
+          <span className={`text-slate-400 font-medium ${isMain ? "text-xs sm:text-sm" : "text-[10px]"}`}>
+            Camera Off
+          </span>
         </div>
       )}
 
       {/* Participant Label */}
-      <div className="absolute bottom-2 sm:bottom-3 left-2 sm:left-3 z-20 flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-1 sm:py-1.5 rounded-xl bg-black/70 backdrop-blur-md border border-white/10">
-        <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-emerald-400"></span>
-        <span className="text-[10px] sm:text-xs font-semibold text-white truncate max-w-[120px] sm:max-w-[200px]">
+      <div className="absolute bottom-2 sm:bottom-3 left-2 sm:left-3 z-20 flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-1 sm:py-1.5 rounded-xl bg-black/70 backdrop-blur-md border border-white/10 max-w-[85%]">
+        <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-emerald-400 flex-shrink-0"></span>
+        <span className="text-[10px] sm:text-xs font-semibold text-white truncate">
           {email}
         </span>
+        {!isMain && isClickable && (
+          <span className="hidden sm:inline-block text-[10px] text-[#8ab4f8] bg-[#8ab4f8]/10 px-1.5 py-0.5 rounded flex-shrink-0">
+            Click to pin
+          </span>
+        )}
       </div>
     </div>
   );

@@ -12,19 +12,17 @@ const normalizeMeetingId = (value) =>
 // RemoteVideoTile — wraps RemoteVideo with an internal ref
 // so each remote participant gets a stable, unique <video> ref.
 // ============================================================
-function RemoteVideoTile({ stream, email, isMuted, isCameraOff, isHandRaised, isPrivacyMode }) {
-  const videoRef = useRef(null);
-
-  useEffect(() => {
-    const el = videoRef.current;
-    if (!el || !stream) return;
-    el.srcObject = stream;
-    el.play().catch(() => {});
-    return () => {
-      if (el) el.srcObject = null;
-    };
-  }, [stream]);
-
+function RemoteVideoTile({
+  stream,
+  email,
+  isMuted,
+  isCameraOff,
+  isHandRaised,
+  isPrivacyMode,
+  isMain = false,
+  onClick,
+  isClickable = false,
+}) {
   return (
     <RemoteVideo
       stream={stream}
@@ -33,6 +31,9 @@ function RemoteVideoTile({ stream, email, isMuted, isCameraOff, isHandRaised, is
       isCameraOff={isCameraOff}
       isHandRaised={isHandRaised}
       isPrivacyMode={isPrivacyMode}
+      isMain={isMain}
+      onClick={onClick}
+      isClickable={isClickable}
     />
   );
 }
@@ -41,9 +42,20 @@ function RemoteVideoTile({ stream, email, isMuted, isCameraOff, isHandRaised, is
 // LocalVideoTile — local user tile with opacity-based hiding
 // so audio keeps playing even when camera is off.
 // ============================================================
-function LocalVideoTile({ videoRef, stream, name, muted, cameraOff }) {
+function LocalVideoTile({
+  videoRef,
+  stream,
+  name,
+  muted,
+  cameraOff,
+  isMain = false,
+  onClick,
+  isClickable = false,
+}) {
+  const innerRef = useRef(null);
+
   useEffect(() => {
-    const el = videoRef.current;
+    const el = (videoRef && videoRef.current) || innerRef.current;
     if (!el || !stream) return undefined;
     el.srcObject = stream;
     el.play().catch(() => {});
@@ -52,35 +64,78 @@ function LocalVideoTile({ videoRef, stream, name, muted, cameraOff }) {
     };
   }, [stream, videoRef]);
 
+  const setRef = (node) => {
+    innerRef.current = node;
+    if (videoRef) {
+      videoRef.current = node;
+    }
+  };
+
   return (
-    <div className="relative min-h-[220px] overflow-hidden rounded-2xl border border-white/10 bg-[#11182d] shadow-xl">
+    <div
+      onClick={onClick}
+      className={`relative w-full h-full min-h-0 overflow-hidden rounded-xl sm:rounded-2xl border transition-all duration-200 bg-[#11182d] flex items-center justify-center ${
+        isClickable
+          ? "cursor-pointer hover:border-[#8ab4f8]/70 hover:shadow-2xl"
+          : ""
+      } ${
+        isMain
+          ? "border-white/10 shadow-xl"
+          : "border-[#0f3460]/50 hover:ring-2 hover:ring-[#8ab4f8]/50 shadow-md"
+      }`}
+    >
       {/* FIX: Use opacity-0 + absolute instead of display:none so audio keeps decoding */}
       <video
-        ref={videoRef}
+        ref={setRef}
         autoPlay
         playsInline
         muted
-        className={`h-full min-h-[220px] w-full object-cover transition-opacity duration-300 ${
+        className={`h-full w-full object-cover transition-opacity duration-300 ${
           cameraOff ? "opacity-0 absolute" : "opacity-100"
         }`}
       />
       {cameraOff && (
-        <div className="flex min-h-[220px] flex-col items-center justify-center gap-3 bg-[#18213b]">
-          <div className="flex h-20 w-20 items-center justify-center rounded-full bg-[#8ab4f8] text-3xl font-bold text-[#11182d]">
+        <div className="flex h-full w-full flex-col items-center justify-center gap-2 sm:gap-3 bg-[#18213b] p-2">
+          <div
+            className={`flex items-center justify-center rounded-full bg-[#8ab4f8] font-bold text-[#11182d] shadow-lg ${
+              isMain
+                ? "h-16 w-16 sm:h-20 sm:w-20 text-2xl sm:text-3xl"
+                : "h-9 h-9 sm:h-11 sm:w-11 text-sm sm:text-base"
+            }`}
+          >
             {name.charAt(0).toUpperCase()}
           </div>
-          <span className="text-sm text-slate-400">Camera off</span>
+          <span
+            className={`text-slate-400 font-medium ${
+              isMain ? "text-xs sm:text-sm" : "text-[10px]"
+            }`}
+          >
+            Camera off
+          </span>
         </div>
       )}
-      <div className="absolute inset-x-3 bottom-3 flex items-center justify-between rounded-xl bg-black/60 px-3 py-2 text-sm backdrop-blur">
+      {/* Pinned / Main Badge */}
+      {isMain && (
+        <div className="absolute top-2 sm:top-3 left-2 sm:left-3 z-20 px-2 sm:px-2.5 py-1 bg-black/60 backdrop-blur-md text-[#8ab4f8] text-[10px] sm:text-xs rounded-lg border border-[#8ab4f8]/30 flex items-center gap-1">
+          <span>📌 Main (You)</span>
+        </div>
+      )}
+      <div className="absolute inset-x-2 sm:inset-x-3 bottom-2 sm:bottom-3 z-20 flex items-center justify-between rounded-xl bg-black/70 px-2.5 sm:px-3 py-1.5 sm:py-2 text-xs backdrop-blur-md border border-white/10 max-w-[85%]">
         <span className="max-w-[70%] truncate font-semibold text-white">
           You ({name})
         </span>
-        {muted && (
-          <span className="rounded-full bg-red-500/80 px-2 py-1 text-[10px] font-bold text-white">
-            Muted
-          </span>
-        )}
+        <div className="flex items-center gap-1.5">
+          {muted && (
+            <span className="rounded-full bg-red-500/80 px-2 py-0.5 text-[10px] font-bold text-white">
+              Muted
+            </span>
+          )}
+          {!isMain && isClickable && (
+            <span className="hidden sm:inline-block text-[10px] text-[#8ab4f8] bg-[#8ab4f8]/10 px-1.5 py-0.5 rounded">
+              Click to pin
+            </span>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -164,6 +219,7 @@ function MeetingRoom() {
   const [hostSocketId, setHostSocketId] = useState(null);
   const [showEndConfirm, setShowEndConfirm] = useState(false);
   const [copiedToast, setCopiedToast] = useState("");
+  const [maximizedUserId, setMaximizedUserId] = useState(null);
 
   const iceServers = [
     { urls: "stun:stun.l.google.com:19302" },
@@ -459,6 +515,7 @@ function MeetingRoom() {
         delete next[socketId];
         return next;
       });
+      setMaximizedUserId((current) => (current === socketId ? null : current));
     };
 
     // FIX: Apply offer → answer and then flush queued ICE candidates
@@ -739,18 +796,112 @@ function MeetingRoom() {
   };
 
   // -----------------------------------------------------------
-  // Compute grid
+  // Compute Main and Thumbnail Tiles (Google Meet Style)
   // -----------------------------------------------------------
   const remoteEntries = Object.entries(remoteStreams);
-  const tileCount = remoteEntries.length + 1;
-  const gridClass =
-    tileCount === 1
-      ? "grid-cols-1"
-      : tileCount < 5
-      ? "grid-cols-1 sm:grid-cols-2"
-      : "grid-cols-2 lg:grid-cols-3";
-
   const isHost = hostSocketId === socket.id;
+
+  // Determine if a remote participant is currently maximized
+  const isRemoteMaximized =
+    maximizedUserId !== null &&
+    remoteStreams[maximizedUserId] !== undefined;
+
+  const activeRemoteEntry = isRemoteMaximized
+    ? [maximizedUserId, remoteStreams[maximizedUserId]]
+    : null;
+
+  // 1. The Main Video Tile
+  let mainTile;
+  if (isRemoteMaximized && activeRemoteEntry) {
+    const [remoteId, item] = activeRemoteEntry;
+    mainTile = (
+      <RemoteVideoTile
+        key={`main-${remoteId}`}
+        stream={item.stream}
+        email={item.email}
+        isMuted={remoteStates[remoteId]?.isMuted}
+        isCameraOff={remoteStates[remoteId]?.isCameraOff}
+        isHandRaised={handRaisedUsers[remoteId] || false}
+        isPrivacyMode={isPrivacyMode}
+        isMain={true}
+        isClickable={true}
+        onClick={() => setMaximizedUserId(null)}
+      />
+    );
+  } else {
+    // Local user's video is the main large view by default
+    mainTile = (
+      <LocalVideoTile
+        key="main-local"
+        videoRef={localVideoRef}
+        stream={localStreamRef.current}
+        name={email}
+        muted={localMuted}
+        cameraOff={localCameraOff}
+        isMain={true}
+        isClickable={false}
+      />
+    );
+  }
+
+  // 2. The Sidebar / Thumbnail Video Tiles
+  const sidebarTiles = [];
+  if (remoteEntries.length > 0) {
+    if (isRemoteMaximized) {
+      // Local user tile becomes the first thumbnail
+      sidebarTiles.push(
+        <LocalVideoTile
+          key="thumb-local"
+          videoRef={localVideoRef}
+          stream={localStreamRef.current}
+          name={email}
+          muted={localMuted}
+          cameraOff={localCameraOff}
+          isMain={false}
+          isClickable={true}
+          onClick={() => setMaximizedUserId(null)}
+        />
+      );
+
+      // Remaining remote participants
+      remoteEntries
+        .filter(([id]) => id !== maximizedUserId)
+        .forEach(([id, item]) => {
+          sidebarTiles.push(
+            <RemoteVideoTile
+              key={`thumb-${id}`}
+              stream={item.stream}
+              email={item.email}
+              isMuted={remoteStates[id]?.isMuted}
+              isCameraOff={remoteStates[id]?.isCameraOff}
+              isHandRaised={handRaisedUsers[id] || false}
+              isPrivacyMode={isPrivacyMode}
+              isMain={false}
+              isClickable={true}
+              onClick={() => setMaximizedUserId(id)}
+            />
+          );
+        });
+    } else {
+      // Local user is in main, all remote participants are thumbnails
+      remoteEntries.forEach(([id, item]) => {
+        sidebarTiles.push(
+          <RemoteVideoTile
+            key={`thumb-${id}`}
+            stream={item.stream}
+            email={item.email}
+            isMuted={remoteStates[id]?.isMuted}
+            isCameraOff={remoteStates[id]?.isCameraOff}
+            isHandRaised={handRaisedUsers[id] || false}
+            isPrivacyMode={isPrivacyMode}
+            isMain={false}
+            isClickable={true}
+            onClick={() => setMaximizedUserId(id)}
+          />
+        );
+      });
+    }
+  }
 
   // ============================================================
   // PRE-JOIN SCREEN
@@ -841,7 +992,7 @@ function MeetingRoom() {
   // LIVE MEETING ROOM
   // ============================================================
   return (
-    <div className="flex min-h-screen flex-col bg-[#0d1328] text-white">
+    <div className="flex h-screen h-[100dvh] flex-col overflow-hidden bg-[#0d1328] text-white select-none">
       {/* Float-up animation keyframes */}
       <style>{`
         @keyframes floatUp {
@@ -863,77 +1014,101 @@ function MeetingRoom() {
       )}
 
       {/* HEADER */}
-      <header className="flex h-16 items-center justify-between border-b border-white/10 bg-[#111a32] px-4 sm:px-6">
+      <header className="flex h-14 sm:h-16 shrink-0 items-center justify-between border-b border-white/10 bg-[#111a32] px-3 sm:px-6">
         <div>
           <p className="text-xs font-bold uppercase tracking-[0.2em] text-[#8ab4f8]">
             Live meeting
           </p>
-          <p className="font-mono text-sm font-bold">
+          <p className="font-mono text-xs sm:text-sm font-bold truncate max-w-[150px] sm:max-w-xs">
             {meetingInfo?.title || meetingId}
           </p>
         </div>
-        <div className="flex items-center gap-3 text-xs text-slate-400">
+        <div className="flex items-center gap-2 sm:gap-3 text-xs text-slate-400">
           <span
             className={`h-2 w-2 rounded-full ${
               socketStatus === "connected" ? "bg-emerald-400" : "bg-red-400"
             }`}
           />
-          {socketStatus === "connected"
-            ? `${participants.length} connected`
-            : "Reconnecting"}
+          <span className="hidden sm:inline">
+            {socketStatus === "connected"
+              ? `${participants.length} connected`
+              : "Reconnecting"}
+          </span>
 
           {/* Copy Invite */}
           <button
             onClick={copyInvite}
-            className="rounded-xl bg-white/10 px-3 py-2 font-semibold text-white hover:bg-white/20 transition-colors"
+            className="rounded-xl bg-white/10 px-2.5 sm:px-3 py-1.5 sm:py-2 font-semibold text-white hover:bg-white/20 transition-colors"
             title="Copy meeting invite"
           >
-            📋 Invite
+            📋 <span className="hidden sm:inline">Invite</span>
           </button>
 
           {/* Chat Toggle */}
           <button
             onClick={() => setChatOpen((current) => !current)}
-            className="rounded-xl bg-white/10 px-3 py-2 font-semibold text-white hover:bg-white/20 transition-colors"
+            className="rounded-xl bg-white/10 px-2.5 sm:px-3 py-1.5 sm:py-2 font-semibold text-white hover:bg-white/20 transition-colors"
           >
-            💬 Chat
+            💬 <span className="hidden sm:inline">Chat</span>
           </button>
         </div>
       </header>
 
       {/* ERROR BAR */}
       {error && (
-        <div className="mx-auto mt-3 w-[min(92%,800px)] rounded-xl border border-amber-400/30 bg-amber-400/10 px-4 py-3 text-center text-sm text-amber-100">
+        <div className="mx-auto mt-2 w-[min(92%,800px)] rounded-xl border border-amber-400/30 bg-amber-400/10 px-4 py-2 text-center text-xs sm:text-sm text-amber-100 shrink-0">
           {error}
         </div>
       )}
 
-      {/* MAIN CONTENT */}
-      <div className="flex flex-1 overflow-hidden">
-        {/* VIDEO GRID */}
-        <main className="flex flex-1 flex-col gap-5 p-4 sm:p-6">
-          <div className={`grid flex-1 content-center gap-4 ${gridClass}`}>
-            {/* Local tile */}
-            <LocalVideoTile
-              videoRef={localVideoRef}
-              stream={localStreamRef.current}
-              name={email}
-              muted={localMuted}
-              cameraOff={localCameraOff}
-            />
+      {/* MAIN MEETING VIEWPORT */}
+      <div className="flex flex-1 min-h-0 min-w-0 overflow-hidden relative">
+        {/* VIDEO STAGE */}
+        <main className="flex flex-1 min-h-0 min-w-0 p-2.5 sm:p-4 overflow-hidden">
+          <div className="flex flex-1 min-h-0 min-w-0 flex-col md:flex-row gap-2.5 sm:gap-3.5 items-center justify-center w-full h-full">
+            {/* MAIN LARGE VIDEO */}
+            <div
+              className={`relative flex-1 min-h-0 min-w-0 w-full h-full flex items-center justify-center ${
+                sidebarTiles.length > 0
+                  ? "max-h-[62vh] sm:max-h-[68vh] md:max-h-full"
+                  : "h-full"
+              }`}
+            >
+              <div className="w-full h-full max-w-full max-h-full aspect-video flex items-center justify-center">
+                {mainTile}
+              </div>
+            </div>
 
-            {/* Remote tiles — using RemoteVideo component with full features */}
-            {remoteEntries.map(([id, item]) => (
-              <RemoteVideoTile
-                key={id}
-                stream={item.stream}
-                email={item.email}
-                isMuted={remoteStates[id]?.isMuted}
-                isCameraOff={remoteStates[id]?.isCameraOff}
-                isHandRaised={handRaisedUsers[id] || false}
-                isPrivacyMode={isPrivacyMode}
-              />
-            ))}
+            {/* PARTICIPANT THUMBNAIL STRIP / SIDEBAR */}
+            {sidebarTiles.length > 0 && (
+              <div
+                className={`
+                  flex-shrink-0 min-h-0 min-w-0
+                  w-full h-24 sm:h-28 flex flex-row gap-2 items-center justify-start sm:justify-center overflow-x-auto overflow-y-hidden px-1 py-0.5 no-scrollbar
+                  ${
+                    sidebarTiles.length <= 4
+                      ? "md:h-full md:w-60 lg:w-72 xl:w-80 md:flex md:flex-col md:gap-2.5 md:justify-center md:overflow-y-hidden"
+                      : "md:h-full md:w-72 lg:w-80 xl:w-96 md:grid md:grid-cols-2 md:gap-2 md:content-center md:auto-rows-fr md:overflow-y-hidden"
+                  }
+                `}
+              >
+                {sidebarTiles.map((tile, idx) => (
+                  <div
+                    key={idx}
+                    className={`
+                      h-full aspect-video flex-shrink-0 min-w-0 max-w-[140px] sm:max-w-[180px]
+                      ${
+                        sidebarTiles.length <= 4
+                          ? "md:h-auto md:w-full md:aspect-video md:flex-1 md:min-h-0 md:max-h-[48%]"
+                          : "md:h-full md:w-full md:aspect-video md:min-h-0"
+                      }
+                    `}
+                  >
+                    {tile}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </main>
 
