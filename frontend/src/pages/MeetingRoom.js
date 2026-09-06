@@ -1154,39 +1154,51 @@ function MeetingRoom() {
       )}
 
       {/* FOOTER CONTROLS */}
-      <footer className="flex flex-wrap items-center justify-center gap-2 border-t border-white/10 bg-[#111a32] p-4 sm:gap-3">
+      <footer className="flex shrink-0 flex-wrap items-center justify-center gap-1.5 sm:gap-2.5 border-t border-white/10 bg-[#111a32] p-2 sm:p-3 md:p-3.5 max-w-full z-20">
         {/* Mic */}
         <button
           onClick={toggleMic}
-          className={`rounded-2xl px-4 py-3 text-sm font-bold ${
+          className={`rounded-xl sm:rounded-2xl px-3 sm:px-4 py-2 sm:py-2.5 text-xs sm:text-sm font-bold flex items-center gap-1.5 active:scale-95 transition-all ${
             localMuted
-              ? "bg-red-500 text-white"
-              : "bg-white/10 text-white"
+              ? "bg-red-500 text-white hover:bg-red-600 shadow-md shadow-red-500/20"
+              : "bg-white/10 text-white hover:bg-white/20"
           }`}
+          title={localMuted ? "Unmute microphone" : "Mute microphone"}
         >
-          {localMuted ? "🎙️ Unmute" : "🎙️ Mute"}
+          <span>🎙️</span>
+          <span>{localMuted ? "Unmute" : "Mute"}</span>
         </button>
 
         {/* Camera */}
         <button
           onClick={toggleCamera}
-          className={`rounded-2xl px-4 py-3 text-sm font-bold ${
+          className={`rounded-xl sm:rounded-2xl px-3 sm:px-4 py-2 sm:py-2.5 text-xs sm:text-sm font-bold flex items-center gap-1.5 active:scale-95 transition-all ${
             localCameraOff
-              ? "bg-red-500 text-white"
-              : "bg-white/10 text-white"
+              ? "bg-red-500 text-white hover:bg-red-600 shadow-md shadow-red-500/20"
+              : "bg-white/10 text-white hover:bg-white/20"
           }`}
+          title={localCameraOff ? "Turn on camera" : "Turn off camera"}
         >
-          {localCameraOff ? "📷 Start camera" : "📷 Stop camera"}
+          <span>📷</span>
+          <span>
+            {localCameraOff ? "Start camera" : "Stop camera"}
+          </span>
         </button>
 
         {/* Screen Share */}
         <button
           onClick={toggleShare}
-          className={`rounded-2xl px-4 py-3 text-sm font-bold ${
-            sharing ? "bg-emerald-500 text-white" : "bg-white/10 text-white"
+          className={`rounded-xl sm:rounded-2xl px-3 sm:px-4 py-2 sm:py-2.5 text-xs sm:text-sm font-bold flex items-center gap-1.5 active:scale-95 transition-all ${
+            sharing
+              ? "bg-emerald-500 text-white hover:bg-emerald-600 shadow-md shadow-emerald-500/20"
+              : "bg-white/10 text-white hover:bg-white/20"
           }`}
+          title={sharing ? "Stop sharing screen" : "Share screen"}
         >
-          {sharing ? "🖥️ Stop sharing" : "🖥️ Share screen"}
+          <span>🖥️</span>
+          <span className="hidden xs:inline sm:inline">
+            {sharing ? "Stop sharing" : "Share screen"}
+          </span>
         </button>
 
         {/* Raise Hand */}
@@ -1200,24 +1212,29 @@ function MeetingRoom() {
               isHandRaised: next,
             });
           }}
-          className={`rounded-2xl px-4 py-3 text-sm font-bold ${
+          className={`rounded-xl sm:rounded-2xl px-3 sm:px-4 py-2 sm:py-2.5 text-xs sm:text-sm font-bold flex items-center gap-1.5 active:scale-95 transition-all ${
             handRaised
-              ? "bg-amber-400 text-[#0d1328]"
-              : "bg-white/10 text-white"
+              ? "bg-amber-400 text-[#0d1328] hover:bg-amber-300 shadow-md shadow-amber-400/20"
+              : "bg-white/10 text-white hover:bg-white/20"
           }`}
+          title={handRaised ? "Lower hand" : "Raise hand"}
         >
-          ✋ {handRaised ? "Lower hand" : "Raise hand"}
+          <span>✋</span>
+          <span className="hidden xs:inline sm:inline">
+            {handRaised ? "Lower hand" : "Raise hand"}
+          </span>
         </button>
 
         {/* Quick Emoji Reactions */}
-        <div className="flex items-center gap-1 rounded-2xl bg-white/5 px-2 py-1">
+        <div className="flex items-center gap-1 rounded-xl sm:rounded-2xl bg-white/5 px-2 py-1 border border-white/5">
           {["👍", "❤️", "🎉", "🔥"].map((emoji) => (
             <button
               key={emoji}
               onClick={() =>
                 socket.emit("send-reaction", { meetingId, email, emoji })
               }
-              className="rounded-full p-2 text-lg hover:scale-125 transition-transform hover:bg-white/10"
+              className="rounded-full p-1 sm:p-1.5 text-base sm:text-lg hover:scale-125 active:scale-95 transition-transform hover:bg-white/10"
+              title={`React with ${emoji}`}
             >
               {emoji}
             </button>
@@ -1228,7 +1245,7 @@ function MeetingRoom() {
         {isHost && (
           <button
             onClick={() => setShowEndConfirm(true)}
-            className="rounded-2xl bg-red-700 px-4 py-3 text-sm font-bold text-white hover:bg-red-800"
+            className="rounded-xl sm:rounded-2xl bg-red-700 px-3 sm:px-4 py-2 sm:py-2.5 text-xs sm:text-sm font-bold text-white hover:bg-red-800 active:scale-95 transition-all shadow-md shadow-red-700/20"
           >
             End Meeting
           </button>
@@ -1237,7 +1254,7 @@ function MeetingRoom() {
         {/* Leave */}
         <button
           onClick={leave}
-          className="rounded-2xl bg-red-600 px-4 py-3 text-sm font-bold text-white"
+          className="rounded-xl sm:rounded-2xl bg-red-600 px-3 sm:px-4 py-2 sm:py-2.5 text-xs sm:text-sm font-bold text-white hover:bg-red-700 active:scale-95 transition-all shadow-md shadow-red-600/20"
         >
           Leave
         </button>

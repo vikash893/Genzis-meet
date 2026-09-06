@@ -57,7 +57,7 @@ function Chat({ meetingId, email, onClose, messages = [], onSendMessage }) {
   };
 
   return (
-    <div className="w-full sm:w-80 h-full flex flex-col bg-[#16213e] border-l border-[#0f3460]/50">
+    <div className="fixed inset-0 z-50 sm:relative sm:inset-auto sm:z-auto w-full sm:w-80 md:w-88 lg:w-96 h-full flex flex-col bg-[#16213e] border-l border-[#0f3460]/50 shadow-2xl sm:shadow-none animate-fadeIn">
       {/* Header */}
       <div className="px-4 py-3 flex items-center justify-between border-b border-[#0f3460]/50 shrink-0">
         <div className="flex items-center gap-2.5">
